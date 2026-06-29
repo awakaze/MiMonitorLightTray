@@ -7,6 +7,7 @@ import threading
 import tkinter as tk
 from typing import Callable, Optional
 
+from .config import AppConfig, WidgetConfig
 from .miio_client import Debouncer, LightState, MiMonitorLight
 
 log = logging.getLogger(__name__)
@@ -152,22 +153,28 @@ class DesktopWidget:
     def __init__(
         self,
         light: MiMonitorLight,
+        config: AppConfig,
         on_close: Optional[Callable[[], None]] = None,
         on_open_setup: Optional[Callable[[], None]] = None,
+        on_config_changed: Optional[Callable[[], None]] = None,
     ) -> None:
         """初始化桌面小部件。
 
         Args:
             light: 灯光控制客户端
+            config: 应用配置
             on_close: 关闭回调
             on_open_setup: 打开设置回调
+            on_config_changed: 配置变化回调
         """
         self._light = light
+        self._config = config
         self._on_close = on_close
         self._on_open_setup = on_open_setup
+        self._on_config_changed = on_config_changed
         self._visible = False
         self._suppress = False
-        self._locked = True  # 默认锁定位置
+        self._locked = config.widget.locked  # 从配置加载锁定状态
         self._drag_data = {"x": 0, "y": 0}
 
         # 创建主窗口
@@ -314,6 +321,9 @@ class DesktopWidget:
         else:
             self._lock_btn.configure(text="🔓")
             log.info("桌面小部件已解锁位置")
+        # 保存配置
+        self._config.widget.locked = self._locked
+        self._save_config()
 
     def _on_drag_start(self, event: tk.Event) -> None:
         """拖动开始。"""
@@ -332,6 +342,25 @@ class DesktopWidget:
         """拖动结束。"""
         self._drag_data["x"] = 0
         self._drag_data["y"] = 0
+        # 保存位置
+        self._save_position()
+
+    def _save_position(self) -> None:
+        """保存小部件位置。"""
+        x = self._root.winfo_x()
+        y = self._root.winfo_y()
+        self._config.widget.x = x
+        self._config.widget.y = y
+        self._save_config()
+
+    def _save_config(self) -> None:
+        """保存配置。"""
+        try:
+            self._config.save()
+            if self._on_config_changed:
+                self._on_config_changed()
+        except Exception as e:
+            log.warning("保存配置失败: %s", e)
 
     def _on_brightness(self, v: str) -> None:
         """亮度变化事件。"""
@@ -414,6 +443,9 @@ class DesktopWidget:
             self._root.deiconify()
             self._position_widget()
             self._apply_rounded_corners()
+            # 保存可见性状态
+            self._config.widget.visible = True
+            self._save_config()
             # 刷新状态
             threading.Thread(target=self._bg_refresh, daemon=True).start()
 
@@ -422,16 +454,27 @@ class DesktopWidget:
         if self._visible:
             self._visible = False
             self._root.withdraw()
+            # 保存可见性状态
+            self._config.widget.visible = False
+            self._save_config()
 
     def _position_widget(self) -> None:
-        """将小部件定位在屏幕右下角。"""
+        """将小部件定位在屏幕右下角或保存的位置。"""
         self._root.update_idletasks()
         width = self.WIDTH
         height = self._root.winfo_reqheight()
-        screen_width = self._root.winfo_screenwidth()
-        screen_height = self._root.winfo_screenheight()
-        x = screen_width - width - 20
-        y = screen_height - height - 60
+
+        # 使用保存的位置（如果有效）
+        if self._config.widget.is_valid_position():
+            x = self._config.widget.x
+            y = self._config.widget.y
+        else:
+            # 默认位置：屏幕右下角
+            screen_width = self._root.winfo_screenwidth()
+            screen_height = self._root.winfo_screenheight()
+            x = screen_width - width - 20
+            y = screen_height - height - 60
+
         self._root.geometry(f"{width}x{height}+{x}+{y}")
 
     def _bg_refresh(self) -> None:

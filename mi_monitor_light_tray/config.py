@@ -45,8 +45,22 @@ class DeviceConfig:
 
 
 @dataclass
+class WidgetConfig:
+    """桌面小部件配置。"""
+    visible: bool = False  # 是否显示
+    x: int = 0  # X 坐标
+    y: int = 0  # Y 坐标
+    locked: bool = True  # 是否锁定位置
+
+    def is_valid_position(self) -> bool:
+        """检查位置是否有效。"""
+        return self.x > 0 and self.y > 0
+
+
+@dataclass
 class AppConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
+    widget: WidgetConfig = field(default_factory=WidgetConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "AppConfig":
@@ -62,12 +76,19 @@ class AppConfig:
         # Tolerate legacy keys silently — DeviceConfig(**unknown) would raise.
         known = {f for f in DeviceConfig.__dataclass_fields__}
         dev = DeviceConfig(**{k: v for k, v in dev_data.items() if k in known})
-        return cls(device=dev)
+        # 加载小部件配置
+        widget_data = data.get("widget", {})
+        widget_known = {f for f in WidgetConfig.__dataclass_fields__}
+        widget = WidgetConfig(**{k: v for k, v in widget_data.items() if k in widget_known})
+        return cls(device=dev, widget=widget)
 
     def save(self, path: Optional[Path] = None) -> None:
         path = path or default_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"device": asdict(self.device)}
+        payload = {
+            "device": asdict(self.device),
+            "widget": asdict(self.widget),
+        }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, path)

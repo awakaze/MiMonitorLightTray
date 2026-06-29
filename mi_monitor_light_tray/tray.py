@@ -48,6 +48,7 @@ class TrayController:
         get_power_off_at_exit: Callable[[], bool],
         on_toggle_power_off_at_exit: Callable[[], None],
         light: Optional[object] = None,
+        config: Optional[object] = None,
     ) -> None:
         self._on_left_click = on_left_click
         self._on_open_settings = on_open_settings
@@ -57,6 +58,7 @@ class TrayController:
         self._get_power_off_at_exit = get_power_off_at_exit
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
         self._light = light
+        self._config = config
         self._desktop_widget: Optional[DesktopWidget] = None
 
         self._icon = pystray.Icon(
@@ -160,7 +162,8 @@ class TrayController:
             # 创建桌面小部件
             self._desktop_widget = DesktopWidget(
                 self._light,
-                on_open_setup=self._on_open_settings
+                config=self._config,
+                on_open_setup=self._on_open_settings,
             )
             self._desktop_widget.show()
             log.info("桌面小部件已创建并显示")
