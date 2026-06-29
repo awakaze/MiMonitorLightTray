@@ -54,7 +54,6 @@ class TrayController:
         self._on_toggle_power_on_at_startup = on_toggle_power_on_at_startup
         self._get_power_off_at_exit = get_power_off_at_exit
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
-        self._icon_visible = True
 
         self._icon = pystray.Icon(
             "mi-monitor-light-tray",
@@ -80,11 +79,6 @@ class TrayController:
                     checked=lambda _i: self._get_power_off_at_exit(),
                 ),
                 Menu.SEPARATOR,
-                MenuItem(
-                    "隐藏托盘图标",
-                    self._handle_toggle_icon_visibility,
-                    checked=lambda _i: not self._icon_visible,
-                ),
                 MenuItem("退出", self._handle_exit),
             ),
         )
@@ -142,28 +136,6 @@ class TrayController:
             self._on_toggle_power_off_at_exit()
         except Exception:  # noqa: BLE001
             log.exception("power_off_at_exit toggle failed")
-        try:
-            icon.update_menu()
-        except Exception:  # noqa: BLE001
-            log.debug("update_menu failed", exc_info=True)
-
-    def _handle_toggle_icon_visibility(self, icon, _item) -> None:
-        """切换托盘图标在任务栏通知区域的显示状态。
-
-        这个功能用于解决 Windows 系统下托盘图标被隐藏到溢出区域的问题。
-        切换后，图标会重新出现在任务栏通知区域。
-        """
-        self._icon_visible = not self._icon_visible
-        try:
-            # 设置图标可见性
-            icon.visible = self._icon_visible
-            if self._icon_visible:
-                log.info("托盘图标已设置为显示在任务栏通知区域")
-            else:
-                log.info("托盘图标已设置为隐藏")
-        except Exception as e:
-            log.warning("切换托盘图标可见性失败: %s", e)
-        # 更新菜单状态
         try:
             icon.update_menu()
         except Exception:  # noqa: BLE001
