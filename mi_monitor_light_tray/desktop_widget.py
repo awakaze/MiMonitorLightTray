@@ -182,7 +182,7 @@ class DesktopWidget:
         self._root.overrideredirect(True)  # 无边框窗口
         self._root.resizable(False, False)
         self._root.configure(bg=self.BG)
-        # 不设置 topmost，只显示在桌面上方
+        self._root.attributes("-toolwindow", True)  # 不在任务栏显示
         try:
             self._root.attributes("-alpha", 0.97)
         except tk.TclError:
