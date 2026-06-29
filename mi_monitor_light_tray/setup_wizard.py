@@ -11,20 +11,10 @@ from typing import Callable, Optional
 from .config import AppConfig, DeviceConfig
 from .miio_client import quick_ping
 from . import autostart
+from .cloud_login_window import CloudLoginWindow
+from .token_extractor.types import XiaomiDeviceInfo
 
 log = logging.getLogger(__name__)
-
-_HELP_TEXT = (
-    "如何获取 miio Token：\n\n"
-    "1. 从以下地址下载 token_extractor.exe 并运行：\n"
-    "   https://github.com/PiotrMachowski/\n"
-    "   Xiaomi-cloud-tokens-extractor/releases\n\n"
-    "2. 输入根据提示授权登录，工具会列出所有\n"
-    "   设备的 IP 和 32 位 Token\n\n"
-    "3. 找到显示器挂灯，复制 IP 和 Token\n\n"
-    "IP 也可从米家 App → 设备页面右上角三个点 → ⋮\n"
-    "→ 更多设置 网络信息 中查看"
-)
 
 
 class _Tooltip:
@@ -84,6 +74,9 @@ class SetupWizard:
         style.configure("TFrame", background="#f3f3f3")
         style.configure("TButton", padding=(12, 6),
                         font=("Microsoft YaHei UI", 9))
+        style.configure("Blue.TButton", foreground="#0066cc")
+
+        self._style = style
 
         self._build_ui()
 
@@ -118,11 +111,25 @@ class SetupWizard:
         canvas.bind_all("<MouseWheel>", _on_wheel)
 
         # ── Title ─────────────────────────────────────────────────────────────
-        ttk.Label(frm, text="设备配置",
-                  font=("Microsoft YaHei UI", 13, "bold"),
-                  foreground="#1a1a1a"
-                  ).grid(row=0, column=0, columnspan=2,
-                         sticky="w", pady=(0, 12))
+        title_row = ttk.Frame(frm)
+        title_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+
+        ttk.Label(
+            title_row,
+            text="设备配置",
+            font=("Microsoft YaHei UI", 13, "bold"),
+            foreground="#1a1a1a",
+        ).pack(side="left")
+
+        # 蓝色的「自动获取」按钮
+        fetch_btn = ttk.Button(
+            title_row,
+            text="自动获取",
+            command=self._open_cloud_login,
+            width=10,
+            style="Blue.TButton",
+        )
+        fetch_btn.pack(side="right")
 
         # ── Fields ─────────────────────────────────────────────────────────────
         self._ip_var    = tk.StringVar(value=self._config.device.ip)
@@ -216,42 +223,15 @@ class SetupWizard:
 
         frm.columnconfigure(1, weight=1)
 
-        # ── Separator + help ───────────────────────────────────────────────────
-        ttk.Separator(frm).grid(row=8, column=0, columnspan=2,
-                                sticky="ew", pady=(12, 4))
-
-        ttk.Label(frm, text="如何获取参数？",
-                  font=("Microsoft YaHei UI", 9, "bold"),
-                  foreground="#0066cc", cursor="hand2",
-                  ).grid(row=9, column=0, columnspan=2,
-                         sticky="w", padx=16, pady=(4, 6))
-
-        help_box = tk.Text(
-            frm, height=9, width=50, wrap="word",
-            background="#fafafa", relief="solid", borderwidth=1,
-            font=("Microsoft YaHei UI", 9),
-            padx=8, pady=6, state="normal",
-        )
-        help_box.insert("1.0", _HELP_TEXT)
-        help_box.configure(state="disabled")
-        help_box.grid(row=10, column=0, columnspan=2,
-                      sticky="nsew", padx=16, pady=(0, 8))
-
-        # When hovering help_box, let it scroll internally; stop outer canvas scrolling
-        def _stop_outer(_e): canvas.unbind_all("<MouseWheel>")
-        def _resume_outer(_e): canvas.bind_all("<MouseWheel>", _on_wheel)
-        help_box.bind("<Enter>", _stop_outer)
-        help_box.bind("<Leave>", _resume_outer)
-
         # ── Status + buttons ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self._status_var,
                   foreground="#0066cc"
-                  ).grid(row=11, column=0, columnspan=2,
+                  ).grid(row=8, column=0, columnspan=2,
                          sticky="w", padx=16)
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=12, column=0, columnspan=2,
+        btn_row.grid(row=9, column=0, columnspan=2,
                      sticky="e", pady=(12, 4), padx=16)
 
         ttk.Button(btn_row, text="取消",
@@ -340,3 +320,24 @@ class SetupWizard:
     def run(self) -> None:
         if self._owns_root:
             self._root.mainloop()
+
+    def _open_cloud_login(self) -> None:
+        """打开云端登录窗口。"""
+        def on_device_selected(device: XiaomiDeviceInfo) -> None:
+            """设备选择回调。"""
+            self._ip_var.set(device.localip)
+            self._token_var.set(device.token)
+            if device.name:
+                self._name_var.set(device.name)
+            if device.model:
+                self._model_var.set(device.model)
+            messagebox.showinfo(
+                "获取成功",
+                f"已自动填充设备信息：\n\n"
+                f"名称：{device.name}\n"
+                f"IP：{device.localip}\n"
+                f"型号：{device.model or '未知'}",
+                parent=self._root,
+            )
+
+        CloudLoginWindow(self._root, on_device_selected)

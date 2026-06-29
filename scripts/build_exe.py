@@ -45,6 +45,13 @@ def main() -> int:
         # package and bundles every non-Python file.
         "--collect-data",
         "miio",
+        # Hidden imports for token extractor
+        "--hidden-import",
+        "Crypto.Cipher.ARC4",
+        "--hidden-import",
+        "Crypto.Random",
+        "--hidden-import",
+        "requests",
         "--distpath",
         str(DIST),
         "--workpath",

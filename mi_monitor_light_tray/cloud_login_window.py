@@ -1,0 +1,351 @@
+"""云端登录窗口。"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import tkinter as tk
+from tkinter import messagebox, ttk
+from typing import Callable, List, Optional
+
+from .token_extractor.auth import QrCodeAuth
+from .token_extractor.types import LoginResult, XiaomiDeviceInfo
+
+log = logging.getLogger(__name__)
+
+
+class CloudLoginWindow:
+    """云端登录窗口。"""
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        on_success: Callable[[XiaomiDeviceInfo], None],
+        on_cancel: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """初始化云端登录窗口。
+
+        Args:
+            parent: 父窗口
+            on_success: 设备选择成功回调
+            on_cancel: 取消回调
+        """
+        self._parent = parent
+        self._on_success = on_success
+        self._on_cancel = on_cancel
+        self._is_closing = False
+        self._current_thread: Optional[threading.Thread] = None
+        self._auth: Optional[QrCodeAuth] = None
+
+        # 创建顶级窗口（模态）
+        self._root = tk.Toplevel(parent)
+        self._root.title("自动获取设备信息")
+        self._root.resizable(True, True)
+        self._root.configure(bg="#f3f3f3")
+        self._root.transient(parent)
+        self._root.grab_set()
+        self._root.minsize(400, 350)
+
+        # 窗口关闭时清理
+        self._root.protocol("WM_DELETE_WINDOW", self._close)
+
+        # 窗口显示后再居中
+        self._root.withdraw()
+
+        self._build_ui()
+        self._show_qrcode_login()
+
+    def _build_ui(self) -> None:
+        """构建 UI 框架。"""
+        self._content_frame = ttk.Frame(self._root, padding=24)
+        self._content_frame.pack(fill="both", expand=True)
+
+    def _clear_content(self) -> None:
+        """清空内容区域。"""
+        for widget in self._content_frame.winfo_children():
+            widget.destroy()
+
+    def _center_window(self) -> None:
+        """将窗口居中显示在屏幕上。"""
+        self._root.update_idletasks()
+        width = self._root.winfo_width()
+        height = self._root.winfo_height()
+        screen_width = self._root.winfo_screenwidth()
+        screen_height = self._root.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self._root.geometry(f"+{x}+{y}")
+        self._root.deiconify()
+
+    def _show_qrcode_login(self) -> None:
+        """显示二维码登录界面。"""
+        self._clear_content()
+
+        ttk.Label(
+            self._content_frame,
+            text="请使用米家 App 扫描二维码登录",
+            font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(pady=(0, 12))
+
+        # 二维码显示区域
+        self._qr_label = ttk.Label(self._content_frame, text="正在获取二维码...")
+        self._qr_label.pack(pady=16)
+
+        # 状态标签
+        self._status_var = tk.StringVar(value="")
+        self._status_label = ttk.Label(
+            self._content_frame,
+            textvariable=self._status_var,
+            foreground="#0066cc",
+        )
+        self._status_label.pack(pady=(8, 4))
+
+        # 按钮
+        btn_frame = ttk.Frame(self._content_frame)
+        btn_frame.pack(pady=(8, 0))
+
+        ttk.Button(
+            btn_frame, text="取消", command=self._close
+        ).pack(side="left", padx=4)
+
+        # 居中显示窗口
+        self._center_window()
+
+        # 开始获取二维码
+        self._current_thread = threading.Thread(
+            target=self._fetch_qr_code, daemon=True
+        )
+        self._current_thread.start()
+
+    def _fetch_qr_code(self) -> None:
+        """获取二维码（线程中执行）。"""
+        try:
+            self._auth = QrCodeAuth()
+            result = self._auth.login()
+            if self._is_closing:
+                return
+            self._root.after(0, lambda: self._handle_qr_result(result))
+        except Exception as e:
+            if self._is_closing:
+                return
+            self._root.after(0, lambda: self._handle_login_error(str(e)))
+
+    def _handle_qr_result(self, result: LoginResult) -> None:
+        """处理二维码获取结果。"""
+        if result.success and result.qr_image_data:
+            # 显示二维码图像
+            try:
+                from PIL import Image, ImageTk
+                import io
+
+                image = Image.open(io.BytesIO(result.qr_image_data))
+                image = image.resize((200, 200), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+                self._qr_label.configure(image=photo, text="")
+                self._qr_label.image = photo  # 保持引用
+            except Exception as e:
+                log.warning("显示二维码失败: %s", e)
+                self._qr_label.configure(text="二维码显示失败，请查看控制台")
+
+            self._status_var.set("请使用米家 App 扫描二维码")
+
+            # 开始等待扫码
+            self._current_thread = threading.Thread(
+                target=self._wait_for_scan_thread, daemon=True
+            )
+            self._current_thread.start()
+        else:
+            self._qr_label.configure(text="获取二维码失败")
+            self._status_var.set(result.message)
+
+    def _wait_for_scan_thread(self) -> None:
+        """等待扫码线程。"""
+        try:
+            result = self._auth.wait_for_scan()
+            if self._is_closing:
+                return
+            self._root.after(0, lambda: self._handle_login_result(result))
+        except Exception as e:
+            if self._is_closing:
+                return
+            self._root.after(0, lambda: self._handle_login_error(str(e)))
+
+    def _handle_login_result(self, result: LoginResult) -> None:
+        """处理登录结果。"""
+        if result.success:
+            self._status_var.set("登录成功，正在获取设备列表...")
+            self._current_thread = threading.Thread(
+                target=self._fetch_devices_thread, daemon=True
+            )
+            self._current_thread.start()
+        else:
+            self._status_var.set(f"登录失败: {result.message}")
+
+    def _fetch_devices_thread(self) -> None:
+        """获取设备列表线程。"""
+        try:
+            devices = self._auth.get_devices()
+            if self._is_closing:
+                return
+            self._root.after(0, lambda: self._show_device_selection(devices))
+        except Exception as e:
+            if self._is_closing:
+                return
+            self._root.after(
+                0,
+                lambda: self._handle_login_error(f"获取设备失败: {e}"),
+            )
+
+    def _show_device_selection(self, devices: List[XiaomiDeviceInfo]) -> None:
+        """显示设备选择界面（2×N 网格布局）。"""
+        self._clear_content()
+
+        if not devices:
+            ttk.Label(
+                self._content_frame,
+                text="未找到任何设备",
+                font=("Microsoft YaHei UI", 11),
+            ).pack(pady=16)
+            ttk.Button(
+                self._content_frame,
+                text="返回",
+                command=self._show_qrcode_login,
+            ).pack()
+            return
+
+        ttk.Label(
+            self._content_frame,
+            text="请选择设备",
+            font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(pady=(0, 12))
+
+        # 设备网格（2列）
+        self._devices = devices
+        self._selected_index = None
+        self._device_buttons: List[tk.Frame] = []
+
+        # 可滚动的设备网格
+        canvas = tk.Canvas(self._content_frame, bg="#f3f3f3", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self._content_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True, pady=(0, 12))
+
+        grid_frame = ttk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=grid_frame, anchor="nw")
+
+        def _on_frame_configure(_e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        grid_frame.bind("<Configure>", _on_frame_configure)
+
+        def _on_canvas_configure(e):
+            canvas.itemconfig(canvas_window, width=e.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 创建设备卡片（2列网格）
+        for i, device in enumerate(devices):
+            row = i // 2
+            col = i % 2
+
+            # 设备卡片框架
+            card = tk.Frame(
+                grid_frame,
+                bg="#ffffff",
+                relief="solid",
+                borderwidth=1,
+                padx=12,
+                pady=10,
+            )
+            card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+
+            # 设备名称
+            name_label = tk.Label(
+                card,
+                text=device.name,
+                font=("Microsoft YaHei UI", 10, "bold"),
+                bg="#ffffff",
+                anchor="w",
+            )
+            name_label.pack(fill="x")
+
+            # 设备型号
+            model_text = device.model or "未知型号"
+            model_label = tk.Label(
+                card,
+                text=model_text,
+                font=("Microsoft YaHei UI", 9),
+                bg="#ffffff",
+                foreground="#666666",
+                anchor="w",
+            )
+            model_label.pack(fill="x")
+
+            # 绑定点击事件
+            def _on_click(event, idx=i):
+                self._select_device(idx)
+
+            card.bind("<Button-1>", _on_click)
+            name_label.bind("<Button-1>", _on_click)
+            model_label.bind("<Button-1>", _on_click)
+
+            self._device_buttons.append(card)
+
+            # 配置列权重
+            grid_frame.columnconfigure(0, weight=1)
+            grid_frame.columnconfigure(1, weight=1)
+
+        # 默认选中第一个
+        if devices:
+            self._select_device(0)
+
+        # 按钮
+        btn_frame = ttk.Frame(self._content_frame)
+        btn_frame.pack(pady=(0, 0))
+
+        ttk.Button(
+            btn_frame, text="取消", command=self._close
+        ).pack(side="left", padx=4)
+
+        ttk.Button(
+            btn_frame, text="确认选择", command=self._on_device_selected
+        ).pack(side="left", padx=4)
+
+    def _select_device(self, index: int) -> None:
+        """选择设备。"""
+        # 取消之前的选中状态
+        if self._selected_index is not None:
+            prev_card = self._device_buttons[self._selected_index]
+            prev_card.configure(bg="#ffffff")
+            for widget in prev_card.winfo_children():
+                widget.configure(bg="#ffffff")
+
+        # 设置新的选中状态
+        self._selected_index = index
+        card = self._device_buttons[index]
+        card.configure(bg="#e6f3ff")
+        for widget in card.winfo_children():
+            widget.configure(bg="#e6f3ff")
+
+    def _on_device_selected(self) -> None:
+        """设备选择确认按钮点击事件。"""
+        if self._selected_index is None:
+            messagebox.showwarning("未选择", "请选择一个设备", parent=self._root)
+            return
+
+        device = self._devices[self._selected_index]
+        self._on_success(device)
+        self._close()
+
+    def _handle_login_error(self, error_message: str) -> None:
+        """处理登录错误。"""
+        self._status_var.set(f"错误: {error_message}")
+
+    def _close(self) -> None:
+        """关闭窗口。"""
+        self._is_closing = True
+        try:
+            self._root.destroy()
+        except tk.TclError:
+            pass
+        if self._on_cancel:
+            self._on_cancel()

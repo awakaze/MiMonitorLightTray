@@ -24,6 +24,8 @@ dependencies = [
     "python-miio>=0.5.12",
     "pystray>=0.19.5",
     "Pillow>=10.0.0",
+    "requests>=2.25.0",
+    "pycryptodome>=3.15.0",
 ]
 
 [project.optional-dependencies]
