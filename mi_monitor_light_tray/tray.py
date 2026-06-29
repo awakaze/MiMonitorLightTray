@@ -148,22 +148,21 @@ class TrayController:
             log.debug("update_menu failed", exc_info=True)
 
     def _handle_toggle_icon_visibility(self, icon, _item) -> None:
-        """切换托盘图标的可见性。"""
+        """切换托盘图标在任务栏通知区域的显示状态。
+
+        这个功能用于解决 Windows 系统下托盘图标被隐藏到溢出区域的问题。
+        切换后，图标会重新出现在任务栏通知区域。
+        """
         self._icon_visible = not self._icon_visible
-        if self._icon_visible:
-            # 显示图标
-            try:
-                icon.visible = True
-                log.info("托盘图标已显示")
-            except Exception as e:
-                log.warning("显示托盘图标失败: %s", e)
-        else:
-            # 隐藏图标
-            try:
-                icon.visible = False
-                log.info("托盘图标已隐藏")
-            except Exception as e:
-                log.warning("隐藏托盘图标失败: %s", e)
+        try:
+            # 设置图标可见性
+            icon.visible = self._icon_visible
+            if self._icon_visible:
+                log.info("托盘图标已设置为显示在任务栏通知区域")
+            else:
+                log.info("托盘图标已设置为隐藏")
+        except Exception as e:
+            log.warning("切换托盘图标可见性失败: %s", e)
         # 更新菜单状态
         try:
             icon.update_menu()
