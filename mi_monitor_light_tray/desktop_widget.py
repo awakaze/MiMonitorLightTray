@@ -140,9 +140,9 @@ class _DarkSlider(tk.Canvas):
 class DesktopWidget:
     """桌面小部件 - 固定在桌面上的灯光控制面板。"""
 
-    WIDTH = 320
-    PAD_X = 12
-    PAD_Y = 10
+    WIDTH = 400
+    PAD_X = 16
+    PAD_Y = 12
 
     BG     = "#1f1f1f"
     TEXT   = "#ffffff"
@@ -167,6 +167,8 @@ class DesktopWidget:
         self._on_open_setup = on_open_setup
         self._visible = False
         self._suppress = False
+        self._locked = True  # 默认锁定位置
+        self._drag_data = {"x": 0, "y": 0}
 
         # 创建主窗口
         self._root = tk.Toplevel()
@@ -174,6 +176,10 @@ class DesktopWidget:
         self._root.resizable(False, False)
         self._root.configure(bg=self.BG)
         self._root.attributes("-topmost", True)  # 始终在最前面
+        try:
+            self._root.attributes("-alpha", 0.97)
+        except tk.TclError:
+            pass
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
@@ -189,8 +195,22 @@ class DesktopWidget:
         # 初始化 UI
         self._build_ui()
 
+        # 应用圆角
+        self._apply_rounded_corners()
+
         # 初始隐藏
         self._root.withdraw()
+
+    def _apply_rounded_corners(self) -> None:
+        """应用圆角窗口效果。"""
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetAncestor(self._root.winfo_id(), 2)
+            val = ctypes.c_int(2)  # DWMWCP_ROUND
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(val), 4)
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         """构建 UI。"""
@@ -224,6 +244,21 @@ class DesktopWidget:
             ("⏻", self._on_toggle_power),
         ]):
             self._icon_btn(footer, glyph, cmd)
+
+        # 锁定/解锁按钮（右下角）
+        self._lock_btn = tk.Label(
+            footer, text="🔒", fg=self.MUTED, bg=self.BG,
+            font=("Segoe UI Emoji", 12), padx=6, cursor="hand2"
+        )
+        self._lock_btn.pack(side="right")
+        self._lock_btn.bind("<Button-1>", lambda _: self._toggle_lock())
+        self._lock_btn.bind("<Enter>", lambda _: self._lock_btn.configure(fg=self.TEXT))
+        self._lock_btn.bind("<Leave>", lambda _: self._lock_btn.configure(fg=self.MUTED))
+
+        # 绑定拖动事件（整个窗口）
+        self._root.bind("<ButtonPress-1>", self._on_drag_start)
+        self._root.bind("<B1-Motion>", self._on_drag_motion)
+        self._root.bind("<ButtonRelease-1>", self._on_drag_end)
 
     def _build_row(self, parent, icon: str, label: str,
                    var: tk.IntVar, from_: int, to: int,
@@ -269,6 +304,34 @@ class DesktopWidget:
         btn.bind("<Button-1>", lambda _: cmd())
         btn.bind("<Enter>",    lambda _: btn.configure(fg=self.TEXT))
         btn.bind("<Leave>",    lambda _: btn.configure(fg=self.MUTED))
+
+    def _toggle_lock(self) -> None:
+        """切换锁定/解锁状态。"""
+        self._locked = not self._locked
+        if self._locked:
+            self._lock_btn.configure(text="🔒")
+            log.info("桌面小部件已锁定位置")
+        else:
+            self._lock_btn.configure(text="🔓")
+            log.info("桌面小部件已解锁位置")
+
+    def _on_drag_start(self, event: tk.Event) -> None:
+        """拖动开始。"""
+        if not self._locked:
+            self._drag_data["x"] = event.x
+            self._drag_data["y"] = event.y
+
+    def _on_drag_motion(self, event: tk.Event) -> None:
+        """拖动中。"""
+        if not self._locked:
+            x = self._root.winfo_x() + (event.x - self._drag_data["x"])
+            y = self._root.winfo_y() + (event.y - self._drag_data["y"])
+            self._root.geometry(f"+{x}+{y}")
+
+    def _on_drag_end(self, event: tk.Event) -> None:
+        """拖动结束。"""
+        self._drag_data["x"] = 0
+        self._drag_data["y"] = 0
 
     def _on_brightness(self, v: str) -> None:
         """亮度变化事件。"""
@@ -350,6 +413,7 @@ class DesktopWidget:
             self._visible = True
             self._root.deiconify()
             self._position_widget()
+            self._apply_rounded_corners()
             # 刷新状态
             threading.Thread(target=self._bg_refresh, daemon=True).start()
 
