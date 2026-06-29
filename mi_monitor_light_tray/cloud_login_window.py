@@ -40,10 +40,11 @@ class CloudLoginWindow:
         # 创建顶级窗口（模态）
         self._root = tk.Toplevel(parent)
         self._root.title("自动获取设备信息")
-        self._root.resizable(False, False)
+        self._root.resizable(True, True)
         self._root.configure(bg="#f3f3f3")
         self._root.transient(parent)
         self._root.grab_set()
+        self._root.minsize(450, 350)
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._close)
@@ -311,7 +312,7 @@ class CloudLoginWindow:
             )
 
     def _show_device_selection(self, devices: List[XiaomiDeviceInfo]) -> None:
-        """显示设备选择界面。"""
+        """显示设备选择界面（2×N 网格布局）。"""
         self._clear_content()
 
         if not devices:
@@ -333,30 +334,84 @@ class CloudLoginWindow:
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(pady=(0, 12))
 
-        # 设备列表
-        listbox_frame = ttk.Frame(self._content_frame)
-        listbox_frame.pack(fill="both", expand=True, pady=(0, 12))
-
-        scrollbar = ttk.Scrollbar(listbox_frame)
-        scrollbar.pack(side="right", fill="y")
-
-        self._device_listbox = tk.Listbox(
-            listbox_frame,
-            yscrollcommand=scrollbar.set,
-            font=("Microsoft YaHei UI", 10),
-            selectmode="single",
-        )
-        self._device_listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=self._device_listbox.yview)
-
+        # 设备网格（2列）
         self._devices = devices
-        for i, device in enumerate(devices):
-            display_text = f"{device.name} ({device.model or '未知型号'}) - {device.localip}"
-            self._device_listbox.insert(tk.END, display_text)
+        self._selected_index = None
+        self._device_buttons: List[tk.Frame] = []
 
-        # 选择第一个
+        # 可滚动的设备网格
+        canvas = tk.Canvas(self._content_frame, bg="#f3f3f3", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self._content_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True, pady=(0, 12))
+
+        grid_frame = ttk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=grid_frame, anchor="nw")
+
+        def _on_frame_configure(_e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        grid_frame.bind("<Configure>", _on_frame_configure)
+
+        def _on_canvas_configure(e):
+            canvas.itemconfig(canvas_window, width=e.width)
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 创建设备卡片（2列网格）
+        for i, device in enumerate(devices):
+            row = i // 2
+            col = i % 2
+
+            # 设备卡片框架
+            card = tk.Frame(
+                grid_frame,
+                bg="#ffffff",
+                relief="solid",
+                borderwidth=1,
+                padx=12,
+                pady=10,
+            )
+            card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+
+            # 设备名称
+            name_label = tk.Label(
+                card,
+                text=device.name,
+                font=("Microsoft YaHei UI", 10, "bold"),
+                bg="#ffffff",
+                anchor="w",
+            )
+            name_label.pack(fill="x")
+
+            # 设备型号
+            model_text = device.model or "未知型号"
+            model_label = tk.Label(
+                card,
+                text=model_text,
+                font=("Microsoft YaHei UI", 9),
+                bg="#ffffff",
+                foreground="#666666",
+                anchor="w",
+            )
+            model_label.pack(fill="x")
+
+            # 绑定点击事件
+            def _on_click(event, idx=i):
+                self._select_device(idx)
+
+            card.bind("<Button-1>", _on_click)
+            name_label.bind("<Button-1>", _on_click)
+            model_label.bind("<Button-1>", _on_click)
+
+            self._device_buttons.append(card)
+
+            # 配置列权重
+            grid_frame.columnconfigure(0, weight=1)
+            grid_frame.columnconfigure(1, weight=1)
+
+        # 默认选中第一个
         if devices:
-            self._device_listbox.selection_set(0)
+            self._select_device(0)
 
         # 按钮
         btn_frame = ttk.Frame(self._content_frame)
@@ -370,14 +425,29 @@ class CloudLoginWindow:
             btn_frame, text="确认选择", command=self._on_device_selected
         ).pack(side="left", padx=4)
 
+    def _select_device(self, index: int) -> None:
+        """选择设备。"""
+        # 取消之前的选中状态
+        if self._selected_index is not None:
+            prev_card = self._device_buttons[self._selected_index]
+            prev_card.configure(bg="#ffffff")
+            for widget in prev_card.winfo_children():
+                widget.configure(bg="#ffffff")
+
+        # 设置新的选中状态
+        self._selected_index = index
+        card = self._device_buttons[index]
+        card.configure(bg="#e6f3ff")
+        for widget in card.winfo_children():
+            widget.configure(bg="#e6f3ff")
+
     def _on_device_selected(self) -> None:
         """设备选择确认按钮点击事件。"""
-        selection = self._device_listbox.curselection()
-        if not selection:
+        if self._selected_index is None:
             messagebox.showwarning("未选择", "请选择一个设备", parent=self._root)
             return
 
-        device = self._devices[selection[0]]
+        device = self._devices[self._selected_index]
         self._on_success(device)
         self._close()
 
