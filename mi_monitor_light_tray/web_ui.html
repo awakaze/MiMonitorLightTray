@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>显示器挂灯</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1c1d21;
+    --panel: #26272d;
+    --panel-border: #34353c;
+    --accent: #f6c265;
+    --accent-warm: #ffb070;
+    --accent-cool: #b8d6ff;
+    --text: #ecedef;
+    --text-dim: #9aa0a6;
+    --danger: #ff6b6b;
+    --ok: #6dd58c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: radial-gradient(circle at 30% 0%, #2a2c34, #131418 60%);
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+  main {
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--text-dim); transition: background 0.2s;
+    box-shadow: 0 0 0 0 rgba(0,0,0,0);
+  }
+  .status-dot.ok    { background: var(--ok);     box-shadow: 0 0 6px var(--ok); }
+  .status-dot.err   { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .power-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+  }
+  .power-label { font-size: 16px; }
+  .power-state { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+  button.power {
+    appearance: none; border: 0; cursor: pointer;
+    width: 60px; height: 32px; border-radius: 16px;
+    background: #3b3c44; position: relative;
+    transition: background 0.2s;
+  }
+  button.power::after {
+    content: ""; position: absolute; top: 3px; left: 3px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: #ecedef; transition: transform 0.2s;
+  }
+  button.power.on { background: var(--accent); }
+  button.power.on::after { transform: translateX(28px); }
+  button.power:disabled { opacity: 0.4; cursor: not-allowed; }
+  .slider-row { margin-top: 4px; }
+  .slider-row + .slider-row { margin-top: 22px; }
+  .slider-label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; color: var(--text-dim); margin-bottom: 8px;
+  }
+  .slider-value { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 32px; background: transparent; outline: none;
+    margin: 0;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 8px; border-radius: 4px;
+    background: linear-gradient(to right, #4a4b53, #4a4b53);
+  }
+  input[type=range]::-moz-range-track {
+    height: 8px; border-radius: 4px; background: #4a4b53;
+  }
+  input.brightness::-webkit-slider-runnable-track {
+    background: linear-gradient(to right, #5a4a30, var(--accent));
+  }
+  input.brightness::-moz-range-track {
+    background: linear-gradient(to right, #5a4a30, var(--accent));
+  }
+  input.ct::-webkit-slider-runnable-track {
+    background: linear-gradient(to right, var(--accent-warm), #fff7d6, var(--accent-cool));
+  }
+  input.ct::-moz-range-track {
+    background: linear-gradient(to right, var(--accent-warm), #fff7d6, var(--accent-cool));
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; margin-top: -7px;
+    border: 2px solid rgba(0,0,0,0.15);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    cursor: pointer;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; border: 2px solid rgba(0,0,0,0.15);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    cursor: pointer;
+  }
+  input[type=range]:disabled::-webkit-slider-thumb { opacity: 0.4; cursor: not-allowed; }
+  input[type=range]:disabled::-moz-range-thumb { opacity: 0.4; cursor: not-allowed; }
+  .meta {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .meta span { background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 6px 10px; }
+  .err-banner {
+    background: rgba(255,107,107,0.12);
+    border: 1px solid rgba(255,107,107,0.4);
+    color: #ffb3b3;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .err-banner.visible { display: block; }
+  footer { text-align: center; font-size: 11px; color: var(--text-dim); margin-top: 24px; }
+  footer a { color: var(--text-dim); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>显示器挂灯</h1>
+      <div class="sub" id="model-line">连接中…</div>
+    </div>
+    <div class="status-dot" id="status-dot" title="状态"></div>
+  </header>
+
+  <div class="err-banner" id="err"></div>
+
+  <div class="panel">
+    <div class="power-row">
+      <div>
+        <div class="power-label">电源</div>
+        <div class="power-state" id="power-state">—</div>
+      </div>
+      <button class="power" id="power-btn" disabled aria-label="切换电源"></button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>亮度</span>
+        <span class="slider-value" id="b-val">—</span>
+      </div>
+      <input type="range" class="brightness" id="b-slider" min="1" max="100" value="50" disabled>
+    </div>
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>色温</span>
+        <span class="slider-value" id="ct-val">—</span>
+      </div>
+      <input type="range" class="ct" id="ct-slider" min="2700" max="6500" value="4000" disabled>
+    </div>
+  </div>
+
+  <div class="meta" id="meta-row"></div>
+
+  <footer>
+    <a href="https://github.com/Martlnez/MiMonitorLightTray" target="_blank" rel="noopener">MiMonitorLightTray</a>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const TOKEN = qs.get("token") || "";
+
+  const $ = (id) => document.getElementById(id);
+  const dot = $("status-dot");
+  const powerBtn = $("power-btn");
+  const powerState = $("power-state");
+  const bSlider = $("b-slider");
+  const bVal = $("b-val");
+  const ctSlider = $("ct-slider");
+  const ctVal = $("ct-val");
+  const modelLine = $("model-line");
+  const errBanner = $("err");
+  const metaRow = $("meta-row");
+
+  const headers = { "Content-Type": "application/json" };
+  if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+
+  async function api(method, path, body) {
+    const opts = { method, headers };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(path, opts);
+    let data = null;
+    try { data = await r.json(); } catch { /* empty */ }
+    if (!r.ok) {
+      const msg = (data && data.error) || ("HTTP " + r.status);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  function showError(msg) {
+    if (!msg) {
+      errBanner.classList.remove("visible");
+      errBanner.textContent = "";
+    } else {
+      errBanner.textContent = msg;
+      errBanner.classList.add("visible");
+    }
+  }
+
+  function render(state) {
+    if (!state) return;
+    const reachable = state.reachable && !state.error;
+    dot.classList.toggle("ok", reachable);
+    dot.classList.toggle("err", !!state.error);
+
+    modelLine.textContent = state.model
+      ? `${state.model} · ${reachable ? "在线" : "离线"}`
+      : (reachable ? "在线" : "未连接");
+
+    showError(state.error || "");
+
+    powerBtn.disabled = false;
+    powerBtn.classList.toggle("on", !!state.is_on);
+    powerState.textContent = state.is_on ? "开" : "关";
+
+    if (state.brightness_min != null) {
+      bSlider.min = state.brightness_min;
+      bSlider.max = state.brightness_max;
+    }
+    if (state.color_temp_min != null) {
+      ctSlider.min = state.color_temp_min;
+      ctSlider.max = state.color_temp_max;
+    }
+    if (!bSlider.matches(":active")) bSlider.value = state.brightness || bSlider.value;
+    if (!ctSlider.matches(":active")) ctSlider.value = state.color_temp || ctSlider.value;
+    bVal.textContent = (state.brightness != null ? state.brightness : "—");
+    ctVal.textContent = (state.color_temp != null ? state.color_temp + "K" : "—");
+    bSlider.disabled = false;
+    ctSlider.disabled = false;
+
+    metaRow.innerHTML = "";
+    if (state.brightness_min != null) {
+      metaRow.insertAdjacentHTML("beforeend",
+        `<span>亮度 ${state.brightness_min}–${state.brightness_max}</span>`);
+    }
+    if (state.color_temp_min != null) {
+      metaRow.insertAdjacentHTML("beforeend",
+        `<span>色温 ${state.color_temp_min}–${state.color_temp_max}K</span>`);
+    }
+  }
+
+  // ---- debounced slider writes ----
+  function debounce(fn, ms) {
+    let t = null;
+    return (...args) => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => { t = null; fn(...args); }, ms);
+    };
+  }
+  const sendBrightness = debounce(async (v) => {
+    try { render(await api("POST", "/api/brightness", { value: v })); }
+    catch (e) { showError(e.message); }
+  }, 140);
+  const sendCT = debounce(async (v) => {
+    try { render(await api("POST", "/api/color_temp", { value: v })); }
+    catch (e) { showError(e.message); }
+  }, 180);
+
+  bSlider.addEventListener("input", () => {
+    bVal.textContent = bSlider.value;
+    sendBrightness(parseInt(bSlider.value, 10));
+  });
+  ctSlider.addEventListener("input", () => {
+    ctVal.textContent = ctSlider.value + "K";
+    sendCT(parseInt(ctSlider.value, 10));
+  });
+
+  powerBtn.addEventListener("click", async () => {
+    powerBtn.disabled = true;
+    try {
+      const want = !powerBtn.classList.contains("on");
+      render(await api("POST", "/api/power", { on: want }));
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      powerBtn.disabled = false;
+    }
+  });
+
+  // ---- polling ----
+  async function poll() {
+    try {
+      const s = await api("GET", "/api/state");
+      render(s);
+    } catch (e) {
+      showError(e.message);
+      dot.classList.remove("ok");
+      dot.classList.add("err");
+    }
+  }
+
+  // Initial: force a refresh so the server hits the device once.
+  (async () => {
+    try { render(await api("POST", "/api/refresh")); }
+    catch (e) {
+      try { render(await api("GET", "/api/state")); }
+      catch { showError(e.message); }
+    }
+    setInterval(poll, 4000);
+  })();
+})();
+</script>
+</body>
+</html>

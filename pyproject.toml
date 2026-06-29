@@ -42,3 +42,6 @@ mi-monitor-light-tray-gui = "mi_monitor_light_tray.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["mi_monitor_light_tray*"]
+
+[tool.setuptools.package-data]
+mi_monitor_light_tray = ["web_ui.html"]

@@ -53,6 +53,9 @@ class App:
         # Track whether the atexit shutdown has already run, so we don't double-fire
         # when both the tray-exit path and the interpreter atexit hook trigger.
         self._shutdown_done = False
+        # Optional LAN HTTP server. Started after the tray is up so a port
+        # collision doesn't abort the tray launch.
+        self._web_server = None
         # Register the atexit backstop unconditionally — it's a no-op if the
         # power_off_at_exit flag is false at exit time. Covers exit paths that
         # bypass the tray menu (Ctrl+C, taskbar close, sys.exit).
@@ -73,6 +76,7 @@ class App:
 
     def run(self) -> int:
         self._tray.start()
+        self._maybe_start_web()
         if self._config.device.power_on_at_startup:
             import threading
             threading.Thread(target=self._startup_power_on, daemon=True).start()
@@ -89,8 +93,39 @@ class App:
             # Primary shutdown path: clean tray "退出". Idempotent — atexit
             # backstop will see _shutdown_done and skip.
             self._run_shutdown_power_off()
+            self._stop_web()
             self._tray.stop()
         return 0
+
+    def _maybe_start_web(self) -> None:
+        if not self._config.web.enabled:
+            return
+        try:
+            from .web_server import WebServer
+
+            self._web_server = WebServer(
+                self._light,
+                host=self._config.web.host,
+                port=self._config.web.port,
+                token=self._config.web.token,
+            )
+            host, port = self._web_server.start()
+            log.info("Web UI: http://%s:%d/", host, port)
+        except OSError as exc:
+            log.warning("Web server failed to start on %s:%d: %s",
+                        self._config.web.host, self._config.web.port, exc)
+            self._web_server = None
+        except Exception:  # noqa: BLE001
+            log.exception("Web server failed to start")
+            self._web_server = None
+
+    def _stop_web(self) -> None:
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("Web server stop raised")
+            self._web_server = None
 
     def _startup_power_on(self) -> None:
         """Light follows app startup — refresh, then turn on if reachable."""
@@ -197,6 +232,8 @@ class App:
         self._light = self._build_light(config, self._MiMonitorLight)
         self._light.set_listener(self._on_state_changed)
         self._flyout._light = self._light
+        if self._web_server is not None:
+            self._web_server.update_light(self._light)
         # Reset slider bounds to whatever the freshly-built light reports —
         # info() will refine them once we reconnect, but this keeps the slider
         # consistent if the user picked a different model in the wizard.

@@ -8,6 +8,7 @@ Run from the project root with the dev/build extras installed:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,11 @@ def main() -> int:
         # package and bundles every non-Python file.
         "--collect-data",
         "miio",
+        # The bundled web UI ships as web_ui.html inside our own package — same
+        # picture as the miio specs above: PyInstaller wouldn't include it
+        # otherwise, and the web server would 500 on /.
+        "--add-data",
+        f"{ROOT / 'mi_monitor_light_tray' / 'web_ui.html'}{os.pathsep}mi_monitor_light_tray",
         "--distpath",
         str(DIST),
         "--workpath",

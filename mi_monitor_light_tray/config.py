@@ -45,8 +45,22 @@ class DeviceConfig:
 
 
 @dataclass
+class WebConfig:
+    # Expose a small HTTP server on the LAN so phones/tablets/scripts can drive
+    # the same lamp without needing the tray UI. On by default — once the user
+    # finishes the device wizard, the web UI is reachable at
+    # http://<this-pc>:8765/ on the LAN with no extra setup.
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8765
+    # Optional bearer token. Empty string = no auth (LAN-only convenience).
+    token: str = ""
+
+
+@dataclass
 class AppConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "AppConfig":
@@ -62,12 +76,16 @@ class AppConfig:
         # Tolerate legacy keys silently — DeviceConfig(**unknown) would raise.
         known = {f for f in DeviceConfig.__dataclass_fields__}
         dev = DeviceConfig(**{k: v for k, v in dev_data.items() if k in known})
-        return cls(device=dev)
+
+        web_data = data.get("web", {})
+        web_known = {f for f in WebConfig.__dataclass_fields__}
+        web = WebConfig(**{k: v for k, v in web_data.items() if k in web_known})
+        return cls(device=dev, web=web)
 
     def save(self, path: Optional[Path] = None) -> None:
         path = path or default_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"device": asdict(self.device)}
+        payload = {"device": asdict(self.device), "web": asdict(self.web)}
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, path)
