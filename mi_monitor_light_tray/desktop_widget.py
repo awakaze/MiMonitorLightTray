@@ -153,25 +153,27 @@ class DesktopWidget:
         self,
         light: MiMonitorLight,
         on_close: Optional[Callable[[], None]] = None,
+        on_open_setup: Optional[Callable[[], None]] = None,
     ) -> None:
         """初始化桌面小部件。
 
         Args:
             light: 灯光控制客户端
             on_close: 关闭回调
+            on_open_setup: 打开设置回调
         """
         self._light = light
         self._on_close = on_close
+        self._on_open_setup = on_open_setup
         self._visible = False
         self._suppress = False
 
         # 创建主窗口
         self._root = tk.Toplevel()
-        self._root.title("灯光控制")
+        self._root.overrideredirect(True)  # 无边框窗口
         self._root.resizable(False, False)
         self._root.configure(bg=self.BG)
         self._root.attributes("-topmost", True)  # 始终在最前面
-        self._root.attributes("-toolwindow", True)  # 不在任务栏显示
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
@@ -218,6 +220,7 @@ class DesktopWidget:
                  font=("Segoe UI", 9)).pack(side="left")
 
         for glyph, cmd in reversed([
+            ("⚙", self._open_settings),
             ("⏻", self._on_toggle_power),
         ]):
             self._icon_btn(footer, glyph, cmd)
@@ -272,14 +275,30 @@ class DesktopWidget:
         if self._suppress:
             return
         self._brightness_debouncer.call(
-            self._light.set_brightness, int(float(v)))
+            self._set_brightness_with_status, int(float(v)))
 
     def _on_color_temp(self, v: str) -> None:
         """色温变化事件。"""
         if self._suppress:
             return
         self._color_temp_debouncer.call(
-            self._light.set_color_temp, int(float(v)))
+            self._set_color_temp_with_status, int(float(v)))
+
+    def _set_brightness_with_status(self, value: int) -> None:
+        """设置亮度并更新状态。"""
+        try:
+            self._light.set_brightness(value)
+            self._root.after(0, lambda: self._status_var.set("已开灯"))
+        except Exception as e:
+            log.warning("设置亮度失败: %s", e)
+
+    def _set_color_temp_with_status(self, value: int) -> None:
+        """设置色温并更新状态。"""
+        try:
+            self._light.set_color_temp(value)
+            self._root.after(0, lambda: self._status_var.set("已开灯"))
+        except Exception as e:
+            log.warning("设置色温失败: %s", e)
 
     def _on_toggle_power(self) -> None:
         """切换电源状态。"""
@@ -299,6 +318,12 @@ class DesktopWidget:
             self._status_var.set("已开灯")
         else:
             self._status_var.set("已关灯")
+
+    def _open_settings(self) -> None:
+        """打开设置。"""
+        self._hide()
+        if self._on_open_setup:
+            self._on_open_setup()
 
     def _apply_state(self, state: LightState) -> None:
         """应用灯光状态。"""

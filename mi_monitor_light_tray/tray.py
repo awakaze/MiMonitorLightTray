@@ -158,7 +158,10 @@ class TrayController:
 
         if self._desktop_widget is None:
             # 创建桌面小部件
-            self._desktop_widget = DesktopWidget(self._light)
+            self._desktop_widget = DesktopWidget(
+                self._light,
+                on_open_setup=self._on_open_settings
+            )
             self._desktop_widget.show()
             log.info("桌面小部件已创建并显示")
         else:
