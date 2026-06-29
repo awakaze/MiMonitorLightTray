@@ -39,10 +39,13 @@ If your model is in none of the sources → the app falls back to legacy. For MI
 ## Features
 
 - **Twinkle Tray-style flyout** — appears near the cursor, dismisses on outside click or `Esc`
+- **Desktop widget** — pinnable on-desktop control panel, dark theme + rounded window, drag / lock, remembers position and visibility
+- **Cloud token auto-extract** — built-in "Auto-fetch" button in the setup wizard; scan a QR code with your Xiaomi account and pull device IP + Token in one go
 - **Brightness & color-temperature sliders** — brightness 1–100, color temperature 2700K–6500K
 - **Debounced slider updates** — drags are coalesced into one miio call every ~120/180 ms instead of one per pixel
 - **Single-instance lock** — a Windows named mutex prevents duplicate launches and shows a friendly dialog instead
 - **Auto-rediscovery on IP change** — when DHCP rotates the light's IP, the app locates it again by device ID and updates the config silently
+- **Empty-model auto-detect** — when no model is configured, the app probes via `info()` at startup and picks the correct protocol, avoiding protocol mismatch
 - **Fluent Design look** — native DWM rounded corners, semi-transparent dark surface, Win11 accent color
 - **Minimal vector tray icon** — drawn with Pillow, sharp on any DPI, distinct on/off states
 - **First-run wizard** — IP/Token capture with a built-in **Test connection** button
@@ -75,46 +78,22 @@ Requires Python 3.9+.
 
 ## First-run setup
 
-You need two pieces of information to talk to the light: the **device's LAN IP** and its **32-character miio Token**.
+The setup wizard opens automatically on first launch. **Recommended flow** (three steps):
 
-### 1. Find the device IP
+1. Click **Auto-fetch (自动获取)**
+2. Scan the QR code with your Xiaomi account / Mi Home app
+3. Pick your light from the device grid (2×N layout)
 
-**Option A — Mi Home app**
+IP / Token / model are filled in for you. Hit **Test connection** to verify, then **Save**. The token is written **locally only** to `%APPDATA%\MiMonitorLightTray\config.json` — it never leaves your machine.
 
-1. Open Mi Home, locate the monitor light
-2. Open the device page → **⋮** (top-right) → **More settings** → **Network info**
-3. Note the IP (e.g. `192.168.1.100`)
+### Manual entry (fallback)
 
-**Option B — your router**
+If you'd rather not sign in, or auto-fetch fails, fill the form by hand:
 
-Log in to the router admin page (often `192.168.1.1` or `192.168.0.1`), open the **Connected devices** / **DHCP client list**, and look for a device whose hostname contains `yeelight` or `monitor`.
-
-### 2. Get the miio Token
-
-The token is a 32-char hex string used to authenticate with the device. Mi Home doesn't expose it directly — extract it once with an external tool.
-
-**Recommended: [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor)**
-
-Download the Python script or the Windows EXE, sign in with your Xiaomi account when prompted, and it'll dump every device's IP and token.
-
-**Alternative: `miiocli` (bundled with python-miio)**
-
-```bash
-.venv\Scripts\activate
-miiocli cloud
-# Sign in with your Xiaomi account; tokens for all devices are printed.
-```
-
-### 3. Launch and configure
-
-The first launch opens the setup wizard:
-
-- **Device IP**: from step 1
-- **miio Token**: from step 2
+- **Device IP**: Mi Home → device page → ⋮ → More settings → Network info; or look in your router's DHCP list for a host named `yeelight` / `monitor`
+- **miio Token**: 32-char hex string; extract it with [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor) or `miiocli cloud`
 - **Display name**: anything — shown in the tray tooltip
 - **Model**: leave blank; the app auto-detects it after connecting
-
-Click **Test connection** to verify, then **Save**. The token is written **locally only** to `%APPDATA%\MiMonitorLightTray\config.json` — it never leaves your machine.
 
 ### (Optional) verify connectivity by hand
 
@@ -136,10 +115,20 @@ print(f"Connected: model={info.model} firmware={info.firmware_version}")
 - Click outside the flyout, or press `Esc`, to dismiss it
 - **Right-click** the tray icon:
   - **调整亮度** (Adjust) — open the flyout
+  - **桌面小部件** (Desktop widget) — toggle the desktop widget
   - **设置** (Settings) — reconfigure the device
   - **退出** (Exit) — quit the app
 
 > The right-click menu is intentionally localized to Chinese to match the rest of the device's ecosystem (Mi Home is Chinese-first); the English README mirrors the labels for reference.
+
+### Desktop widget
+
+Open it from the tray right-click menu (**桌面小部件**). The widget is a persistent control panel pinned on the desktop, sharing the flyout's dark theme:
+
+- **Drag** the title area to move it
+- **Right-click** the widget to lock/unlock the position (locked = drag disabled, prevents accidental moves)
+- Position, locked state, and visibility persist in the `widget` block of `config.json`
+- Hidden from the taskbar to keep the desktop tidy
 
 ### Run at startup
 
@@ -192,12 +181,16 @@ Coverage: config serialization ([tests/test_config.py](tests/test_config.py)), t
 ```
 mi_monitor_light_tray/
   __main__.py          entrypoint: single-instance lock → config → tray + flyout
-  config.py            AppConfig / DeviceConfig persistence (atomic write)
+  config.py            AppConfig / DeviceConfig / WidgetConfig persistence (atomic write)
   miio_client.py       legacy Yeelight + MIoT protocol dispatch, thread-safe wrapper + slider Debouncer
   flyout.py            borderless Tk window with Canvas dark sliders
+  desktop_widget.py    pinned-on-desktop widget (drag, lock, position memory)
+  cloud_login_window.py cloud login window (QR sign-in + device picker)
+  token_extractor/     Xiaomi cloud API client: auth + device list fetcher
   icon.py              Pillow-generated tray icon (no binary assets)
-  setup_wizard.py      IP/Token capture window with connection test
+  setup_wizard.py      IP/Token capture window with Auto-fetch button and connection test
   tray.py              pystray system-tray controller
+  shutdown_listener.py Windows WM_QUERYENDSESSION listener — power-off at OS shutdown
   single_instance.py   Windows named-mutex single-instance lock
   discovery.py         UDP-broadcast device discovery, re-locate by device_id
 scripts/
@@ -221,11 +214,17 @@ Location: `%APPDATA%\MiMonitorLightTray\config.json`
     "enable_miot_for_unknown": false,
     "power_on_at_startup": false,
     "power_off_at_exit": false
+  },
+  "widget": {
+    "visible": false,
+    "x": 100,
+    "y": 100,
+    "locked": true
   }
 }
 ```
 
-`device_id` is captured automatically on the first successful connect and is what enables auto-rediscovery when the IP changes. `enable_miot_for_unknown` lets Yeelight devices outside the `_MIOT_MAPPINGS` whitelist try MIoT using lamp22's generic Light-service spec — for newer models that follow the same layout. `power_on_at_startup` / `power_off_at_exit` are two independent toggles that control whether the light follows the app's lifecycle. Brightness and color temperature are remembered by the lamp itself; the system-level launch-at-startup flag lives in the Windows registry, not here.
+`device_id` is captured automatically on the first successful connect and is what enables auto-rediscovery when the IP changes. Leaving `model` blank is fine — the app probes via `info()` at startup, picks the right protocol, and writes the resolved model back. `enable_miot_for_unknown` lets Yeelight devices outside the `_MIOT_MAPPINGS` whitelist try MIoT using lamp22's generic Light-service spec — for newer models that follow the same layout. `power_on_at_startup` / `power_off_at_exit` are two independent toggles that control whether the light follows the app's lifecycle. The `widget` block stores the desktop widget's position, lock state, and visibility. Brightness and color temperature are remembered by the lamp itself; the system-level launch-at-startup flag lives in the Windows registry, not here.
 
 ## Troubleshooting
 
@@ -247,15 +246,9 @@ Windows Explorer may have hidden it in the overflow area; click the up-arrow on 
 **Sliders feel ~0.1 s laggy while dragging**
 That's intentional debouncing (120 ms brightness / 180 ms color temperature) to avoid flooding the device. The final value commits as soon as you let go.
 
-## Roadmap
-
-- The supported-device table is community-driven — PRs welcome. Patch paths:
-  - **Bulk entry is wrong** (wrong CT range, shouldn't be MIoT, etc.) → add an override to `MODEL_CT_RANGES` or `_MIOT_MAPPINGS` in [miio_client.py](mi_monitor_light_tray/miio_client.py). Curated entries always win over bulk.
-  - **MIoT-only model not yet covered** → grab its `(siid, piid)` mapping and add it to `_MIOT_MAPPINGS`.
-  - **Re-scrape / refresh the bulk database** → see [scripts/fetch_miot_specs.py](scripts/fetch_miot_specs.py) (local tooling, not in git).
-
 ## Acknowledgements
 
+- [@zengzoxiong](https://github.com/zengzoxiong) — cloud Token extractor and desktop widget ([PR #1](https://github.com/Martlnez/MiMonitorLightTray/pull/1))
 - [python-miio](https://github.com/rytilahti/python-miio) — the protocol library
 - [pystray](https://github.com/moses-palmer/pystray) — Python system-tray glue
 - [Pillow](https://python-pillow.org/) — icon rendering

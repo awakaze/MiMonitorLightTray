@@ -58,10 +58,13 @@
 ## 特性
 
 - **类 Twinkle Tray 弹出窗** — 鼠标在哪里，弹窗就在哪里，点击外部或 Esc 关闭
+- **桌面小部件** — 可固定在桌面任意位置的控制面板，深色主题 + 圆角窗口，支持拖动 / 锁定，记忆位置与可见性
+- **云端 Token 自动提取** — 设置向导内置「自动获取」按钮，扫码登录小米账号即可一键拉取设备 IP 和 Token
 - **亮度 / 色温滑杆** — 亮度 1–100，色温 2700K–6500K
 - **滑杆防抖** — 拖动时合并请求，约 120/180 ms 才发一次 miio 调用，避免网络拥塞
 - **单例锁** — Windows 命名互斥锁防止重复启动，重复运行时弹窗提示
 - **IP 变化自动发现** — DHCP 续约导致 IP 变化时，自动通过 device ID 在局域网内重新定位设备并更新配置
+- **空 model 自动识别** — 配置里没填型号时，启动时通过 `info()` 探测真实型号并选择正确协议，避免协议错配
 - **Fluent Design 风格** — DWM 原生圆角窗口、半透明、Win11 配色
 - **极简托盘图标** — 矢量绘制，高 DPI 清晰；开/关有不同视觉
 - **首次运行向导** — 内置 IP/Token 配置界面，含"测试连接"按钮
@@ -94,46 +97,22 @@ mi-monitor-light-tray
 
 ## 首次设置
 
-要和挂灯通信，需要两个信息：**设备局域网 IP** 与 **32 位 miio Token**。
+首次运行会自动打开设置向导。**推荐流程**（三步搞定）：
 
-### 1. 获取设备 IP
+1. 点击 **自动获取** 按钮
+2. 用小米账号 / 米家 App 扫描弹出的二维码登录
+3. 在设备列表（2×N 网格）中点击你的台灯
 
-**方法 A：通过米家 App**
+IP / Token / 型号会自动填入表单。点击 **测试连接** 验证，**保存**即可。Token 仅写入本地 `%APPDATA%\MiMonitorLightTray\config.json`，不上传第三方服务器。
 
-1. 打开米家 App，找到显示器挂灯
-2. 进入设备页面 → 右上角三个点 **⋮** → **更多设置** → **网络信息**
-3. 记下 IP 地址（形如 `192.168.1.100`）
+### 手动填写（备选）
 
-**方法 B：通过路由器**
+如果你不想登录小米账号、或自动获取失败，可以手动填：
 
-登录路由器管理页（通常是 `192.168.1.1` 或 `192.168.0.1`），在 **已连接设备** / **DHCP 客户端列表** 里找名称含 `yeelight` 或 `monitor` 的设备。
-
-### 2. 获取 miio Token
-
-Token 是 32 位十六进制字符串，用于设备认证。Token 不会通过米家 App 显式呈现，需要用工具提取。
-
-**推荐工具：[Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor)**
-
-下载 Python 版或 Windows EXE 版，运行后按提示登录小米账号，工具会列出所有设备的 IP 和 Token。
-
-**或使用 python-miio 自带的 miiocli：**
-
-```bash
-.venv\Scripts\activate
-miiocli cloud
-# 按提示登录小米账号，会输出所有设备及其 Token
-```
-
-### 3. 启动并配置
-
-首次运行会自动打开设置向导：
-
-- **设备 IP 地址**：填上一步拿到的 IP
-- **miio Token**：填 32 位十六进制 Token
-- **显示名称**：随意，会显示在托盘提示中
+- **设备 IP**：米家 App → 设备页面 → ⋮ → 更多设置 → 网络信息；或在路由器 DHCP 列表里找名称含 `yeelight` / `monitor` 的设备
+- **miio Token**：32 位十六进制串，可用 [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor) 或 `miiocli cloud` 提取
+- **显示名称**：随意，会显示在托盘提示
 - **型号**：留空即可，连接后自动识别
-
-点击 **测试连接** 验证，成功后 **保存**。Token 仅保存在本地的 `%APPDATA%\MiMonitorLightTray\config.json`，不上传任何服务器。
 
 ### （可选）手动验证连接
 
@@ -155,8 +134,18 @@ print(f"连接成功: model={info.model} firmware={info.firmware_version}")
 - 点击窗口外或按 `Esc` 关闭弹窗
 - **右键单击**托盘图标：
   - **调整亮度** — 打开控制窗
+  - **桌面小部件** — 切换桌面小部件显示
   - **设置** — 重新配置设备
   - **退出** — 关闭程序
+
+### 桌面小部件
+
+右键托盘菜单点击 **桌面小部件** 即可在桌面显示一个常驻控制面板，UI 与托盘弹窗一致：
+
+- **拖动** 标题区域移动位置
+- 右键小部件可 **锁定/解锁** 位置（锁定后无法拖动，防止误碰）
+- 位置、锁定状态、可见性自动持久化到 `config.json` 的 `widget` 段
+- 不在任务栏显示，保持桌面整洁
 
 ### 开机自启动
 
@@ -209,12 +198,16 @@ pytest -q
 ```
 mi_monitor_light_tray/
   __main__.py          入口：单例锁 → 加载配置 → 启动托盘与弹窗
-  config.py            AppConfig / DeviceConfig 持久化（原子写入）
+  config.py            AppConfig / DeviceConfig / WidgetConfig 持久化（原子写入）
   miio_client.py       legacy Yeelight + MIoT 协议分发，线程安全包装 + Debouncer 防抖
   flyout.py            Tk 无边框弹窗 + Canvas 实现的暗色滑杆
+  desktop_widget.py    桌面小部件（可拖动、锁定、记忆位置）
+  cloud_login_window.py 云端登录窗口（二维码登录 + 设备选择）
+  token_extractor/     小米云 API 客户端：authentication + device list 拉取
   icon.py              Pillow 程序化绘制托盘图标（无二进制资源）
-  setup_wizard.py      IP/Token 配置向导，含测试连接
+  setup_wizard.py      IP/Token 配置向导，含「自动获取」按钮和测试连接
   tray.py              pystray 系统托盘控制器
+  shutdown_listener.py Windows WM_QUERYENDSESSION 监听，关机时关灯
   single_instance.py   Windows 命名互斥锁（单例保护）
   discovery.py         UDP 广播设备发现，按 device_id 重定位
 scripts/
@@ -238,11 +231,17 @@ tests/                 pytest 单元测试套件
     "enable_miot_for_unknown": false,
     "power_on_at_startup": false,
     "power_off_at_exit": false
+  },
+  "widget": {
+    "visible": false,
+    "x": 100,
+    "y": 100,
+    "locked": true
   }
 }
 ```
 
-`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` 两个独立开关控制程序启停时是否自动开/关灯。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
+`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`model` 留空时程序会在启动时通过 `info()` 自动探测并回填，避免协议错配。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` 两个独立开关控制程序启停时是否自动开/关灯。`widget` 段记录桌面小部件的位置、锁定状态与可见性。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
 
 ## 常见问题
 
@@ -265,15 +264,9 @@ A：Windows 资源管理器可能把它收进了溢出区，点击托盘左侧�
 **Q：拖滑杆时灯有约 0.1 秒延迟**
 A：这是有意的防抖（120ms 亮度 / 180ms 色温），用来合并请求避免设备被刷爆，松开手后会立即生效。
 
-## Roadmap
-
-- 兼容设备表欢迎社区按真实设备 PR 补充。修正路径：
-  - **bulk 数据某条不对**（色温范围错、不应走 MIoT 等）→ 在 [miio_client.py](mi_monitor_light_tray/miio_client.py) 的 `MODEL_CT_RANGES` 或 `_MIOT_MAPPINGS` 加一条 override（curated 优先于 bulk）
-  - **新增未收录的 MIoT 机型** → 拿到该机型的 `(siid, piid)` 映射后加进 `_MIOT_MAPPINGS`
-  - **重新抓取/更新 bulk 数据库** → 见 [scripts/fetch_miot_specs.py](scripts/fetch_miot_specs.py)（本地工具，不进 git）
-
 ## 致谢
 
+- [@zengzoxiong](https://github.com/zengzoxiong) — 云端 Token 提取与桌面小部件功能（[PR #1](https://github.com/Martlnez/MiMonitorLightTray/pull/1)）
 - [python-miio](https://github.com/rytilahti/python-miio) — miio 协议库
 - [pystray](https://github.com/moses-palmer/pystray) — Python 系统托盘
 - [Pillow](https://python-pillow.org/) — 图标生成
