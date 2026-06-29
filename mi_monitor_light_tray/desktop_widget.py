@@ -31,12 +31,14 @@ class DesktopWidget:
         self._visible = False
 
         # 创建主窗口
-        self._root = tk.Tk()
+        self._root = tk.Toplevel()
         self._root.title("灯光控制")
         self._root.resizable(False, False)
         self._root.configure(bg="#1f1f1f")
         self._root.attributes("-topmost", True)  # 始终在最前面
-        self._root.overrideredirect(True)  # 无边框窗口
+        self._root.attributes("-toolwindow", True)  # 不在任务栏显示
+        # 设置窗口大小和位置
+        self._root.geometry("300x200")
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
@@ -260,13 +262,13 @@ class DesktopWidget:
     def _position_widget(self) -> None:
         """将小部件定位在屏幕右下角。"""
         self._root.update_idletasks()
-        width = self._root.winfo_width()
-        height = self._root.winfo_height()
+        width = 300
+        height = 200
         screen_width = self._root.winfo_screenwidth()
         screen_height = self._root.winfo_screenheight()
         x = screen_width - width - 20
         y = screen_height - height - 60
-        self._root.geometry(f"+{x}+{y}")
+        self._root.geometry(f"{width}x{height}+{x}+{y}")
 
     def toggle_visibility(self) -> None:
         """切换小部件可见性。"""
