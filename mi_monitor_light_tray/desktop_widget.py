@@ -175,7 +175,7 @@ class DesktopWidget:
         self._root.overrideredirect(True)  # 无边框窗口
         self._root.resizable(False, False)
         self._root.configure(bg=self.BG)
-        self._root.attributes("-topmost", True)  # 始终在最前面
+        # 不设置 topmost，只显示在桌面上方
         try:
             self._root.attributes("-alpha", 0.97)
         except tk.TclError:
