@@ -86,6 +86,9 @@ class SetupWizard:
         style.configure("TFrame", background="#f3f3f3")
         style.configure("TButton", padding=(12, 6),
                         font=("Microsoft YaHei UI", 9))
+        style.configure("Blue.TButton", foreground="#0066cc")
+
+        self._style = style
 
         self._build_ui()
 
@@ -131,8 +134,6 @@ class SetupWizard:
         ).pack(side="left")
 
         # 蓝色的「自动获取」按钮
-        style.configure("Blue.TButton", foreground="#0066cc")
-
         fetch_btn = ttk.Button(
             title_row,
             text="自动获取",
