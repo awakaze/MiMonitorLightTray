@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, List, Optional
 
-from .token_extractor.auth import PasswordAuth, QrCodeAuth
+from .token_extractor.auth import QrCodeAuth
 from .token_extractor.types import LoginResult, XiaomiDeviceInfo
 
 log = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class CloudLoginWindow:
         self._on_cancel = on_cancel
         self._is_closing = False
         self._current_thread: Optional[threading.Thread] = None
-        self._auth: Optional[object] = None
+        self._auth: Optional[QrCodeAuth] = None
 
         # 创建顶级窗口（模态）
         self._root = tk.Toplevel(parent)
@@ -44,7 +44,7 @@ class CloudLoginWindow:
         self._root.configure(bg="#f3f3f3")
         self._root.transient(parent)
         self._root.grab_set()
-        self._root.minsize(450, 350)
+        self._root.minsize(400, 350)
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._close)
@@ -53,7 +53,7 @@ class CloudLoginWindow:
         self._root.withdraw()
 
         self._build_ui()
-        self._show_login_method_selection()
+        self._show_qrcode_login()
 
     def _build_ui(self) -> None:
         """构建 UI 框架。"""
@@ -64,39 +64,6 @@ class CloudLoginWindow:
         """清空内容区域。"""
         for widget in self._content_frame.winfo_children():
             widget.destroy()
-
-    def _show_login_method_selection(self) -> None:
-        """显示登录方式选择界面。"""
-        self._clear_content()
-
-        ttk.Label(
-            self._content_frame,
-            text="请选择登录方式",
-            font=("Microsoft YaHei UI", 12, "bold"),
-        ).pack(pady=(0, 16))
-
-        ttk.Button(
-            self._content_frame,
-            text="用户名密码登录",
-            command=self._show_password_login,
-            width=25,
-        ).pack(pady=8)
-
-        ttk.Button(
-            self._content_frame,
-            text="扫码登录",
-            command=self._show_qrcode_login,
-            width=25,
-        ).pack(pady=8)
-
-        ttk.Button(
-            self._content_frame,
-            text="取消",
-            command=self._close,
-        ).pack(pady=(16, 0))
-
-        # 居中显示窗口
-        self._center_window()
 
     def _center_window(self) -> None:
         """将窗口居中显示在屏幕上。"""
@@ -110,66 +77,13 @@ class CloudLoginWindow:
         self._root.geometry(f"+{x}+{y}")
         self._root.deiconify()
 
-    def _show_password_login(self) -> None:
-        """显示密码登录界面。"""
-        self._clear_content()
-
-        ttk.Label(
-            self._content_frame,
-            text="用户名密码登录",
-            font=("Microsoft YaHei UI", 11, "bold"),
-        ).pack(pady=(0, 12))
-
-        # 用户名输入
-        ttk.Label(self._content_frame, text="邮箱/手机号/用户ID:").pack(
-            anchor="w", pady=(8, 2)
-        )
-        self._username_var = tk.StringVar()
-        ttk.Entry(
-            self._content_frame, textvariable=self._username_var, width=30
-        ).pack(fill="x", pady=(0, 8))
-
-        # 密码输入
-        ttk.Label(self._content_frame, text="密码:").pack(
-            anchor="w", pady=(8, 2)
-        )
-        self._password_var = tk.StringVar()
-        ttk.Entry(
-            self._content_frame,
-            textvariable=self._password_var,
-            show="*",
-            width=30,
-        ).pack(fill="x", pady=(0, 8))
-
-        # 状态标签
-        self._status_var = tk.StringVar(value="")
-        self._status_label = ttk.Label(
-            self._content_frame,
-            textvariable=self._status_var,
-            foreground="#0066cc",
-        )
-        self._status_label.pack(pady=(8, 4))
-
-        # 按钮
-        btn_frame = ttk.Frame(self._content_frame)
-        btn_frame.pack(pady=(8, 0))
-
-        ttk.Button(
-            btn_frame, text="返回", command=self._show_login_method_selection
-        ).pack(side="left", padx=4)
-
-        self._login_btn = ttk.Button(
-            btn_frame, text="登录", command=self._on_password_login
-        )
-        self._login_btn.pack(side="left", padx=4)
-
     def _show_qrcode_login(self) -> None:
         """显示二维码登录界面。"""
         self._clear_content()
 
         ttk.Label(
             self._content_frame,
-            text="扫码登录",
+            text="请使用米家 App 扫描二维码登录",
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(pady=(0, 12))
 
@@ -191,30 +105,15 @@ class CloudLoginWindow:
         btn_frame.pack(pady=(8, 0))
 
         ttk.Button(
-            btn_frame, text="返回", command=self._show_login_method_selection
+            btn_frame, text="取消", command=self._close
         ).pack(side="left", padx=4)
+
+        # 居中显示窗口
+        self._center_window()
 
         # 开始获取二维码
         self._current_thread = threading.Thread(
             target=self._fetch_qr_code, daemon=True
-        )
-        self._current_thread.start()
-
-    def _on_password_login(self) -> None:
-        """密码登录按钮点击事件。"""
-        username = self._username_var.get().strip()
-        password = self._password_var.get().strip()
-
-        if not username or not password:
-            messagebox.showwarning("输入错误", "请输入用户名和密码", parent=self._root)
-            return
-
-        self._login_btn.configure(state="disabled")
-        self._status_var.set("正在登录...")
-        self._auth = PasswordAuth(username, password)
-
-        self._current_thread = threading.Thread(
-            target=self._login_thread, daemon=True
         )
         self._current_thread.start()
 
@@ -226,18 +125,6 @@ class CloudLoginWindow:
             if self._is_closing:
                 return
             self._root.after(0, lambda: self._handle_qr_result(result))
-        except Exception as e:
-            if self._is_closing:
-                return
-            self._root.after(0, lambda: self._handle_login_error(str(e)))
-
-    def _login_thread(self) -> None:
-        """登录线程。"""
-        try:
-            result = self._auth.login()
-            if self._is_closing:
-                return
-            self._root.after(0, lambda: self._handle_login_result(result))
         except Exception as e:
             if self._is_closing:
                 return
@@ -293,8 +180,6 @@ class CloudLoginWindow:
             self._current_thread.start()
         else:
             self._status_var.set(f"登录失败: {result.message}")
-            if hasattr(self, "_login_btn"):
-                self._login_btn.configure(state="normal")
 
     def _fetch_devices_thread(self) -> None:
         """获取设备列表线程。"""
@@ -324,7 +209,7 @@ class CloudLoginWindow:
             ttk.Button(
                 self._content_frame,
                 text="返回",
-                command=self._show_login_method_selection,
+                command=self._show_qrcode_login,
             ).pack()
             return
 
@@ -454,8 +339,6 @@ class CloudLoginWindow:
     def _handle_login_error(self, error_message: str) -> None:
         """处理登录错误。"""
         self._status_var.set(f"错误: {error_message}")
-        if hasattr(self, "_login_btn"):
-            self._login_btn.configure(state="normal")
 
     def _close(self) -> None:
         """关闭窗口。"""

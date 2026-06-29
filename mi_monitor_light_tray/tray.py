@@ -54,6 +54,7 @@ class TrayController:
         self._on_toggle_power_on_at_startup = on_toggle_power_on_at_startup
         self._get_power_off_at_exit = get_power_off_at_exit
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
+        self._icon_visible = True
 
         self._icon = pystray.Icon(
             "mi-monitor-light-tray",
@@ -79,6 +80,11 @@ class TrayController:
                     checked=lambda _i: self._get_power_off_at_exit(),
                 ),
                 Menu.SEPARATOR,
+                MenuItem(
+                    "隐藏托盘图标",
+                    self._handle_toggle_icon_visibility,
+                    checked=lambda _i: not self._icon_visible,
+                ),
                 MenuItem("退出", self._handle_exit),
             ),
         )
@@ -136,6 +142,29 @@ class TrayController:
             self._on_toggle_power_off_at_exit()
         except Exception:  # noqa: BLE001
             log.exception("power_off_at_exit toggle failed")
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.debug("update_menu failed", exc_info=True)
+
+    def _handle_toggle_icon_visibility(self, icon, _item) -> None:
+        """切换托盘图标的可见性。"""
+        self._icon_visible = not self._icon_visible
+        if self._icon_visible:
+            # 显示图标
+            try:
+                icon.visible = True
+                log.info("托盘图标已显示")
+            except Exception as e:
+                log.warning("显示托盘图标失败: %s", e)
+        else:
+            # 隐藏图标
+            try:
+                icon.visible = False
+                log.info("托盘图标已隐藏")
+            except Exception as e:
+                log.warning("隐藏托盘图标失败: %s", e)
+        # 更新菜单状态
         try:
             icon.update_menu()
         except Exception:  # noqa: BLE001
