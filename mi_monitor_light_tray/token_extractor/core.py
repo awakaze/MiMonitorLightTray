@@ -136,7 +136,7 @@ class XiaomiCloudConnector:
             url, "POST", signed_nonce, nonce, params, self._ssecurity
         )
         response = self._session.post(
-            url, headers=headers, cookies=cookies, params=fields
+            url, headers=headers, cookies=cookies, params=fields, timeout=10
         )
         if response.status_code == 200:
             decoded = self.decrypt_rc4(

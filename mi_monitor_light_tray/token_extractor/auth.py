@@ -160,7 +160,7 @@ class PasswordAuth(XiaomiAuth):
             "Content-Type": "application/x-www-form-urlencoded",
         }
         cookies = {"userId": self._username}
-        response = self._session.get(url, headers=headers, cookies=cookies)
+        response = self._session.get(url, headers=headers, cookies=cookies, timeout=10)
         log.debug("login_step_1 response: %s", response.text[:200])
 
         if response.status_code == 200:
@@ -201,7 +201,7 @@ class PasswordAuth(XiaomiAuth):
         }
 
         response = self._session.post(
-            url, headers=headers, params=fields, allow_redirects=False
+            url, headers=headers, params=fields, allow_redirects=False, timeout=10
         )
         log.debug("login_step_2 response: %s", response.text[:200])
 
@@ -233,7 +233,7 @@ class PasswordAuth(XiaomiAuth):
             "User-Agent": self._connector._agent,
             "Content-Type": "application/x-www-form-urlencoded",
         }
-        response = self._session.get(self._location, headers=headers)
+        response = self._session.get(self._location, headers=headers, timeout=10)
         log.debug("login_step_3 response status: %s", response.status_code)
 
         if response.status_code == 200:
@@ -300,7 +300,7 @@ class QrCodeAuth(XiaomiAuth):
             "_dc": str(int(time.time() * 1000)),
         }
 
-        response = self._session.get(url, params=data)
+        response = self._session.get(url, params=data, timeout=10)
         log.debug("login_step_1 response: %s", response.text[:200])
 
         if response.status_code == 200:
@@ -323,7 +323,7 @@ class QrCodeAuth(XiaomiAuth):
         if not self._qr_image_url:
             return None
 
-        response = self._session.get(self._qr_image_url)
+        response = self._session.get(self._qr_image_url, timeout=10)
         if response.status_code == 200:
             return response.content
         return None
@@ -364,6 +364,7 @@ class QrCodeAuth(XiaomiAuth):
                         headers={
                             "content-type": "application/x-www-form-urlencoded"
                         },
+                        timeout=10,
                     )
                     if resp.status_code == 200:
                         self._connector._service_token = resp.cookies.get(
