@@ -207,16 +207,16 @@ def test_set_color_temp_clamps_to_instance_range(fake_yeelight):
 # ── backend dispatch ──────────────────────────────────────────────────────────
 
 
-def test_default_model_uses_miot_backend(fake_miot, fake_yeelight):
-    """Constructing without an explicit model picks the MIoT backend for lamp22."""
-    fake_miot.return_value = MagicMock()
+def test_default_model_uses_legacy_backend(fake_yeelight, fake_miot):
+    """Constructing without an explicit model falls back to legacy backend."""
+    fake_yeelight.return_value = MagicMock()
     light = miio_client.MiMonitorLight(ip="1.2.3.4", token="t" * 32)
-    assert isinstance(light._device, miio_client._MiotBackend)
-    assert light.model == "yeelink.light.lamp22"
+    assert isinstance(light._device, miio_client._LegacyBackend)
+    assert light.model == ""
     assert light.color_temp_min == 2700
     assert light.color_temp_max == 6500
-    # The legacy Yeelight factory must not have been called.
-    fake_yeelight.assert_not_called()
+    # The MIoT factory must not have been called.
+    fake_miot.assert_not_called()
 
 
 def test_legacy_model_uses_legacy_backend(fake_yeelight, fake_miot):
@@ -467,52 +467,58 @@ def test_explicit_model_locks_against_info_overwrite(fake_yeelight):
     assert model_callbacks == []
 
 
-def test_blank_model_auto_resolves_and_fires_callback(fake_yeelight, fake_miot):
+def test_blank_model_auto_resolves_and_fires_callback(fake_yeelight, fake_miot, monkeypatch):
     """Blank model in config → info() resolves → on_model_resolved fires once.
 
     This is the persistence path: caller writes the captured model to config so
     subsequent startups skip the round-trip.
     """
+    # Mock Device for the __init__ probe
+    fake_device_probe = MagicMock()
+    fake_device_probe.info = MagicMock(return_value=MagicMock(model="yeelink.light.lamp4"))
+    fake_device_probe._protocol = MagicMock()
+    fake_device_probe._protocol._device_id = b'\x01\x02\x03\x04'
+    fake_device_class = MagicMock(return_value=fake_device_probe)
+    monkeypatch.setattr(miio_client, "Device", fake_device_class)
+
     device = MagicMock()
     device.set_brightness = MagicMock(return_value=None)
-    device.info = MagicMock(return_value=MagicMock(model="yeelink.light.lamp4"))
-    # Default model lamp22 routes to MIoT; we'll override with the lamp4 reply.
-    fake_miot.return_value = device
     fake_yeelight.return_value = device
+
     resolved: list[str] = []
     light = miio_client.MiMonitorLight(
         ip="1.2.3.4", token="t" * 32,
         model="",  # blank — let auto-detect take over
         on_model_resolved=lambda m: resolved.append(m),
     )
-    # Starts as default (lamp22, MIoT backend).
-    assert light.model == "yeelink.light.lamp22"
-    light.set_brightness(50)
-    # info() reported lamp4, so the resolver should swap us to lamp4 / legacy.
+    # Should have auto-detected lamp4 during __init__
     assert light.model == "yeelink.light.lamp4"
-    assert (light.color_temp_min, light.color_temp_max) == (2600, 5000)
-    # Callback fired exactly once with the resolved model.
+    assert light.device_id == 0x01020304
+    # Callback fired during __init__
     assert resolved == ["yeelink.light.lamp4"]
-    # Second op must NOT re-fire — model_resolved is sticky.
-    light.set_brightness(60)
+    # Subsequent operations don't re-fire the callback
+    light.set_brightness(50)
     assert resolved == ["yeelink.light.lamp4"]
 
 
-def test_blank_model_still_auto_resolves(fake_yeelight, fake_miot):
+def test_blank_model_still_auto_resolves(fake_yeelight, fake_miot, monkeypatch):
     """Sanity: when the user leaves model="" in config, info() auto-detect still works."""
+    # Mock Device for the __init__ probe
+    fake_device_probe = MagicMock()
+    fake_device_probe.info = MagicMock(return_value=MagicMock(model="yeelink.light.lamp4"))
+    fake_device_probe._protocol = MagicMock()
+    fake_device_probe._protocol._device_id = b'\x01\x02\x03\x04'
+    fake_device_class = MagicMock(return_value=fake_device_probe)
+    monkeypatch.setattr(miio_client, "Device", fake_device_class)
+
     device = MagicMock()
     device.set_brightness = MagicMock(return_value=None)
-    device.info = MagicMock(return_value=MagicMock(model="yeelink.light.lamp4"))
-    # Default model lamp22 routes to MIoT; we'll override with the lamp4 reply.
-    fake_miot.return_value = device
     fake_yeelight.return_value = device
+
     light = miio_client.MiMonitorLight(
         ip="1.2.3.4", token="t" * 32,
         model="",  # blank — let auto-detect take over
     )
-    # Starts as default (lamp22, MIoT backend).
-    assert light.model == "yeelink.light.lamp22"
-    light.set_brightness(50)
-    # info() reported lamp4, so the resolver should swap us to lamp4 / legacy.
+    # Should have auto-detected lamp4 during __init__
     assert light.model == "yeelink.light.lamp4"
     assert (light.color_temp_min, light.color_temp_max) == (2600, 5000)

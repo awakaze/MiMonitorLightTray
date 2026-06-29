@@ -292,7 +292,7 @@ class MiMonitorLight:
     ) -> None:
         self._ip = ip
         self._token = token
-        self._model = model or self.DEFAULT_MODEL
+        self._model = model
         # If the caller passed a non-empty model, treat it as authoritative —
         # info() may report something different at runtime (e.g. the user is
         # forcing a model for testing or working around a mis-detected
@@ -306,6 +306,35 @@ class MiMonitorLight:
         self._on_model_resolved = on_model_resolved
         self._enable_miot_for_unknown = enable_miot_for_unknown
         self._lock = threading.Lock()
+
+        # If model is empty, try to detect it immediately via info() before
+        # selecting a backend. This prevents protocol mismatch errors when the
+        # user deletes the model from config. info() is a protocol-layer
+        # command that works regardless of legacy/MIoT application protocol.
+        if not model:
+            try:
+                probe = Device(ip=ip, token=token)
+                probe.timeout = 5.0
+                info = probe.info()
+                detected_model = getattr(info, "model", "") or ""
+                if isinstance(detected_model, str) and detected_model:
+                    self._model = detected_model
+                    log.info("Auto-detected model via info(): %s", detected_model)
+                    # Also capture device_id during this probe.
+                    if device_id == 0:
+                        self._device_id = _extract_device_id(probe)
+                        if self._device_id:
+                            log.info("Captured device ID during init: %08x", self._device_id)
+                    if on_model_resolved is not None:
+                        try:
+                            on_model_resolved(detected_model)
+                        except Exception:  # noqa: BLE001
+                            log.exception("on_model_resolved callback raised during init")
+            except Exception as exc:  # noqa: BLE001
+                # Detection failed — fall back to empty model + legacy backend.
+                # The user will see "offline" until the device becomes reachable.
+                log.warning("Model auto-detection failed, using legacy fallback: %s", exc)
+
         self._device = _make_backend(
             ip, token, self._model,
             enable_miot_for_unknown=enable_miot_for_unknown,
@@ -317,8 +346,9 @@ class MiMonitorLight:
         self._color_temp_min, self._color_temp_max = self.ct_range_for(self._model)
         # Whether info() has reported a model since this session began. Until
         # then we keep probing on success in case the configured model is wrong
-        # or the user left it blank.
-        self._model_resolved = False
+        # or the user left it blank. If we detected the model during __init__
+        # and the caller didn't lock it, mark it as resolved.
+        self._model_resolved = bool(self._model) and not self._model_locked
 
     @property
     def state(self) -> LightState:
