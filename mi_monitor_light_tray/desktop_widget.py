@@ -232,8 +232,8 @@ class DesktopWidget:
     def _update_power_state(self) -> None:
         """更新电源状态显示。"""
         try:
-            state = self._light.get_state()
-            if state and state.power:
+            state = self._light.state
+            if state and state.is_on:
                 self._power_label.configure(text="开启", fg="#60cdff")
                 self._power_btn.configure(fg="#60cdff")
             else:
