@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mi-monitor-light-tray"
-version = "1.3.1"
+version = "1.3.2"
 description = "Twinkle Tray-style Windows tray app for adjusting Xiaomi/Mi monitor light bar brightness and color temperature via python-miio."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -33,6 +33,7 @@ class App:
         from .flyout import FlyoutWindow
         from .miio_client import MiMonitorLight
         from .tray import TrayController
+        from .shutdown_listener import ShutdownListener
 
         self._config = config
         self._light = self._build_light(config, MiMonitorLight)
@@ -50,14 +51,22 @@ class App:
         self._light.set_listener(self._on_state_changed)
         # Cache the imports for later use.
         self._MiMonitorLight = MiMonitorLight
-        # Track whether the atexit shutdown has already run, so we don't double-fire
-        # when both the tray-exit path and the interpreter atexit hook trigger.
+        # Track whether the shutdown has already run, so we don't double-fire
+        # when several exit paths converge (tray "退出", atexit, OS shutdown).
         self._shutdown_done = False
+        self._shutdown_lock = __import__("threading").Lock()
         # Register the atexit backstop unconditionally — it's a no-op if the
         # power_off_at_exit flag is false at exit time. Covers exit paths that
         # bypass the tray menu (Ctrl+C, taskbar close, sys.exit).
         import atexit
         atexit.register(self._atexit_shutdown)
+        # Dedicated top-level window that catches WM_QUERYENDSESSION /
+        # WM_ENDSESSION. atexit alone does not run reliably during Windows
+        # shutdown — the OS terminates the process before Python's exit
+        # handlers finish. The listener runs the power-off synchronously
+        # during WM_QUERYENDSESSION while the network stack is still alive.
+        self._shutdown_listener = ShutdownListener(self._run_shutdown_power_off)
+        self._shutdown_listener.start()
 
     def _build_light(self, config: AppConfig, MiMonitorLight) -> "MiMonitorLight":
         return MiMonitorLight(
@@ -102,10 +111,11 @@ class App:
             log.info("Skipping startup power-on: device unreachable (%s)", state.error)
 
     def _run_shutdown_power_off(self) -> None:
-        """Send power-off if configured. Idempotent; safe to call multiple times."""
-        if self._shutdown_done:
-            return
-        self._shutdown_done = True
+        """Send power-off if configured. Idempotent; safe to call from any thread."""
+        with self._shutdown_lock:
+            if self._shutdown_done:
+                return
+            self._shutdown_done = True
         if not self._config.device.power_off_at_exit:
             return
         log.info("Sending shutdown power-off…")
