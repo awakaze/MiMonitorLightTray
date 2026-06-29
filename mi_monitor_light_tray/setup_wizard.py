@@ -11,6 +11,8 @@ from typing import Callable, Optional
 from .config import AppConfig, DeviceConfig
 from .miio_client import quick_ping
 from . import autostart
+from .cloud_login_window import CloudLoginWindow
+from .token_extractor.types import XiaomiDeviceInfo
 
 log = logging.getLogger(__name__)
 
@@ -118,11 +120,27 @@ class SetupWizard:
         canvas.bind_all("<MouseWheel>", _on_wheel)
 
         # ── Title ─────────────────────────────────────────────────────────────
-        ttk.Label(frm, text="设备配置",
-                  font=("Microsoft YaHei UI", 13, "bold"),
-                  foreground="#1a1a1a"
-                  ).grid(row=0, column=0, columnspan=2,
-                         sticky="w", pady=(0, 12))
+        title_row = ttk.Frame(frm)
+        title_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+
+        ttk.Label(
+            title_row,
+            text="设备配置",
+            font=("Microsoft YaHei UI", 13, "bold"),
+            foreground="#1a1a1a",
+        ).pack(side="left")
+
+        # 蓝色的「自动获取」按钮
+        style.configure("Blue.TButton", foreground="#0066cc")
+
+        fetch_btn = ttk.Button(
+            title_row,
+            text="自动获取",
+            command=self._open_cloud_login,
+            width=10,
+            style="Blue.TButton",
+        )
+        fetch_btn.pack(side="right")
 
         # ── Fields ─────────────────────────────────────────────────────────────
         self._ip_var    = tk.StringVar(value=self._config.device.ip)
@@ -340,3 +358,24 @@ class SetupWizard:
     def run(self) -> None:
         if self._owns_root:
             self._root.mainloop()
+
+    def _open_cloud_login(self) -> None:
+        """打开云端登录窗口。"""
+        def on_device_selected(device: XiaomiDeviceInfo) -> None:
+            """设备选择回调。"""
+            self._ip_var.set(device.localip)
+            self._token_var.set(device.token)
+            if device.name:
+                self._name_var.set(device.name)
+            if device.model:
+                self._model_var.set(device.model)
+            messagebox.showinfo(
+                "获取成功",
+                f"已自动填充设备信息：\n\n"
+                f"名称：{device.name}\n"
+                f"IP：{device.localip}\n"
+                f"型号：{device.model or '未知'}",
+                parent=self._root,
+            )
+
+        CloudLoginWindow(self._root, on_device_selected)
