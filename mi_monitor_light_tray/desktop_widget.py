@@ -41,9 +41,6 @@ class DesktopWidget:
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._hide)
 
-        # 初始化 UI
-        self._build_ui()
-
         # 初始化状态
         self._brightness_var = tk.IntVar(value=50)
         self._color_temp_var = tk.IntVar(value=4000)
@@ -56,6 +53,9 @@ class DesktopWidget:
         # 绑定变量变化
         self._brightness_var.trace_add("write", self._on_brightness_change)
         self._color_temp_var.trace_add("write", self._on_color_temp_change)
+
+        # 初始化 UI
+        self._build_ui()
 
         # 初始隐藏
         self._root.withdraw()
