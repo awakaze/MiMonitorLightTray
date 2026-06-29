@@ -47,8 +47,8 @@ class DesktopWidget:
         self._power_var = tk.BooleanVar(value=False)
 
         # 防抖器
-        self._brightness_debouncer = Debouncer(self._set_brightness, delay=0.12)
-        self._color_temp_debouncer = Debouncer(self._set_color_temp, delay=0.18)
+        self._brightness_debouncer = Debouncer(delay=0.12)
+        self._color_temp_debouncer = Debouncer(delay=0.18)
 
         # 绑定变量变化
         self._brightness_var.trace_add("write", self._on_brightness_change)
@@ -199,13 +199,13 @@ class DesktopWidget:
         """亮度变化事件。"""
         value = self._brightness_var.get()
         self._brightness_label.configure(text=f"{value}%")
-        self._brightness_debouncer(value)
+        self._brightness_debouncer.call(self._set_brightness, value)
 
     def _on_color_temp_change(self, *_args) -> None:
         """色温变化事件。"""
         value = self._color_temp_var.get()
         self._color_temp_label.configure(text=f"{value}K")
-        self._color_temp_debouncer(value)
+        self._color_temp_debouncer.call(self._set_color_temp, value)
 
     def _set_brightness(self, value: int) -> None:
         """设置亮度。"""
