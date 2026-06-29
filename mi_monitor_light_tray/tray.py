@@ -12,6 +12,7 @@ from pystray import Menu, MenuItem
 
 from . import autostart
 from .icon import make_tray_icon
+from .desktop_widget import DesktopWidget
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class TrayController:
         on_toggle_power_on_at_startup: Callable[[], None],
         get_power_off_at_exit: Callable[[], bool],
         on_toggle_power_off_at_exit: Callable[[], None],
+        light: Optional[object] = None,
     ) -> None:
         self._on_left_click = on_left_click
         self._on_open_settings = on_open_settings
@@ -54,6 +56,8 @@ class TrayController:
         self._on_toggle_power_on_at_startup = on_toggle_power_on_at_startup
         self._get_power_off_at_exit = get_power_off_at_exit
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
+        self._light = light
+        self._desktop_widget: Optional[DesktopWidget] = None
 
         self._icon = pystray.Icon(
             "mi-monitor-light-tray",
@@ -79,6 +83,11 @@ class TrayController:
                     checked=lambda _i: self._get_power_off_at_exit(),
                 ),
                 Menu.SEPARATOR,
+                MenuItem(
+                    "固定在桌面上",
+                    self._handle_toggle_desktop_widget,
+                    checked=lambda _i: self._desktop_widget is not None and self._desktop_widget._visible,
+                ),
                 MenuItem("退出", self._handle_exit),
             ),
         )
@@ -136,6 +145,31 @@ class TrayController:
             self._on_toggle_power_off_at_exit()
         except Exception:  # noqa: BLE001
             log.exception("power_off_at_exit toggle failed")
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.debug("update_menu failed", exc_info=True)
+
+    def _handle_toggle_desktop_widget(self, icon, _item) -> None:
+        """切换桌面小部件的显示状态。"""
+        if self._light is None:
+            log.warning("灯光控制客户端未初始化，无法显示桌面小部件")
+            return
+
+        if self._desktop_widget is None:
+            # 创建桌面小部件
+            self._desktop_widget = DesktopWidget(self._light)
+            self._desktop_widget.show()
+            log.info("桌面小部件已创建并显示")
+        else:
+            # 切换显示状态
+            self._desktop_widget.toggle_visibility()
+            if self._desktop_widget._visible:
+                log.info("桌面小部件已显示")
+            else:
+                log.info("桌面小部件已隐藏")
+
+        # 更新菜单状态
         try:
             icon.update_menu()
         except Exception:  # noqa: BLE001

@@ -47,6 +47,7 @@ class App:
             on_toggle_power_on_at_startup=self._toggle_power_on_at_startup,
             get_power_off_at_exit=lambda: self._config.device.power_off_at_exit,
             on_toggle_power_off_at_exit=self._toggle_power_off_at_exit,
+            light=self._light,
         )
         self._light.set_listener(self._on_state_changed)
         # Cache the imports for later use.
