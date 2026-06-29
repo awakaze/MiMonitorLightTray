@@ -48,6 +48,9 @@ class CloudLoginWindow:
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._close)
 
+        # 窗口显示后再居中
+        self._root.withdraw()
+
         self._build_ui()
         self._show_login_method_selection()
 
@@ -90,6 +93,21 @@ class CloudLoginWindow:
             text="取消",
             command=self._close,
         ).pack(pady=(16, 0))
+
+        # 居中显示窗口
+        self._center_window()
+
+    def _center_window(self) -> None:
+        """将窗口居中显示在屏幕上。"""
+        self._root.update_idletasks()
+        width = self._root.winfo_width()
+        height = self._root.winfo_height()
+        screen_width = self._root.winfo_screenwidth()
+        screen_height = self._root.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self._root.geometry(f"+{x}+{y}")
+        self._root.deiconify()
 
     def _show_password_login(self) -> None:
         """显示密码登录界面。"""

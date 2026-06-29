@@ -16,18 +16,6 @@ from .token_extractor.types import XiaomiDeviceInfo
 
 log = logging.getLogger(__name__)
 
-_HELP_TEXT = (
-    "如何获取 miio Token：\n\n"
-    "1. 从以下地址下载 token_extractor.exe 并运行：\n"
-    "   https://github.com/PiotrMachowski/\n"
-    "   Xiaomi-cloud-tokens-extractor/releases\n\n"
-    "2. 输入根据提示授权登录，工具会列出所有\n"
-    "   设备的 IP 和 32 位 Token\n\n"
-    "3. 找到显示器挂灯，复制 IP 和 Token\n\n"
-    "IP 也可从米家 App → 设备页面右上角三个点 → ⋮\n"
-    "→ 更多设置 网络信息 中查看"
-)
-
 
 class _Tooltip:
     def __init__(self, widget: tk.Widget, text: str) -> None:
@@ -235,42 +223,15 @@ class SetupWizard:
 
         frm.columnconfigure(1, weight=1)
 
-        # ── Separator + help ───────────────────────────────────────────────────
-        ttk.Separator(frm).grid(row=8, column=0, columnspan=2,
-                                sticky="ew", pady=(12, 4))
-
-        ttk.Label(frm, text="如何获取参数？",
-                  font=("Microsoft YaHei UI", 9, "bold"),
-                  foreground="#0066cc", cursor="hand2",
-                  ).grid(row=9, column=0, columnspan=2,
-                         sticky="w", padx=16, pady=(4, 6))
-
-        help_box = tk.Text(
-            frm, height=9, width=50, wrap="word",
-            background="#fafafa", relief="solid", borderwidth=1,
-            font=("Microsoft YaHei UI", 9),
-            padx=8, pady=6, state="normal",
-        )
-        help_box.insert("1.0", _HELP_TEXT)
-        help_box.configure(state="disabled")
-        help_box.grid(row=10, column=0, columnspan=2,
-                      sticky="nsew", padx=16, pady=(0, 8))
-
-        # When hovering help_box, let it scroll internally; stop outer canvas scrolling
-        def _stop_outer(_e): canvas.unbind_all("<MouseWheel>")
-        def _resume_outer(_e): canvas.bind_all("<MouseWheel>", _on_wheel)
-        help_box.bind("<Enter>", _stop_outer)
-        help_box.bind("<Leave>", _resume_outer)
-
         # ── Status + buttons ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self._status_var,
                   foreground="#0066cc"
-                  ).grid(row=11, column=0, columnspan=2,
+                  ).grid(row=8, column=0, columnspan=2,
                          sticky="w", padx=16)
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=12, column=0, columnspan=2,
+        btn_row.grid(row=9, column=0, columnspan=2,
                      sticky="e", pady=(12, 4), padx=16)
 
         ttk.Button(btn_row, text="取消",
