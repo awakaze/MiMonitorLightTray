@@ -245,13 +245,13 @@ class SetupWizard:
 
         hotkey_fields = [
             ("亮度增加", self._hotkey_brightness_up_var,
-             "点击后按下按键组合，如: Ctrl+Alt+Up\n建议使用修饰键避免冲突，留空禁用"),
+             "点击后按下按键组合，如: Ctrl+Alt+Up\n右键可清空禁用"),
             ("亮度降低", self._hotkey_brightness_down_var,
-             "点击后按下按键组合，如: Ctrl+Alt+Down\n建议使用修饰键避免冲突"),
+             "点击后按下按键组合，如: Ctrl+Alt+Down\n右键可清空禁用"),
             ("色温增加", self._hotkey_color_temp_up_var,
-             "点击后按下按键组合，如: Ctrl+Alt+Right\n偏冷白，建议使用修饰键"),
+             "点击后按下按键组合，如: Ctrl+Alt+Right\n偏冷白，右键可清空禁用"),
             ("色温降低", self._hotkey_color_temp_down_var,
-             "点击后按下按键组合，如: Ctrl+Alt+Left\n偏暖白，建议使用修饰键"),
+             "点击后按下按键组合，如: Ctrl+Alt+Left\n偏暖白，右键可清空禁用"),
         ]
 
         self._hotkey_entries = []
@@ -266,6 +266,10 @@ class SetupWizard:
             e.bind("<FocusIn>", lambda evt, entry=e: self._start_hotkey_capture(entry))
             e.bind("<KeyPress>", lambda evt, entry=e, v=var: self._capture_hotkey(evt, entry, v))
             e.bind("<FocusOut>", lambda evt, entry=e: self._end_hotkey_capture(entry))
+            # Right-click menu to clear
+            menu = tk.Menu(e, tearoff=0)
+            menu.add_command(label="清空快捷键", command=lambda v=var: v.set(""))
+            e.bind("<Button-3>", lambda evt, m=menu: m.post(evt.x_root, evt.y_root))
             self._hotkey_entries.append(e)
 
         # Step size
