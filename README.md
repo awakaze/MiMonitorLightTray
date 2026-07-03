@@ -59,6 +59,8 @@
 
 - **类 Twinkle Tray 弹出窗** — 鼠标在哪里，弹窗就在哪里，点击外部或 Esc 关闭
 - **桌面小部件** — 可固定在桌面任意位置的控制面板，深色主题 + 圆角窗口，支持拖动 / 锁定，记忆位置与可见性
+- **全局快捷键** — 系统级热键调节亮度和色温，支持全屏游戏（使用 Windows RegisterHotKey API）
+- **自动更新检测** — 启动时自动检查 GitHub Release 新版本，托盘菜单直接跳转下载
 - **云端 Token 自动提取** — 设置向导内置「自动获取」按钮，扫码登录小米账号即可一键拉取设备 IP 和 Token
 - **亮度 / 色温滑杆** — 亮度 1–100，色温 2700K–6500K
 - **滑杆防抖** — 拖动时合并请求，约 120/180 ms 才发一次 miio 调用，避免网络拥塞
@@ -136,7 +138,31 @@ print(f"连接成功: model={info.model} firmware={info.firmware_version}")
   - **调整亮度** — 打开控制窗
   - **桌面小部件** — 切换桌面小部件显示
   - **设置** — 重新配置设备
+  - **检查更新** — 手动检查 GitHub Release 新版本
+  - **启动时自动检查更新** — 开关自动更新检测
+  - **访问 GitHub 主页** — 在浏览器中打开项目主页
   - **退出** — 关闭程序
+
+如果有新版本可用，托盘菜单会显示 🔔 提示并提供下载链接。
+
+### 全局快捷键
+
+在 **设置** 窗口的"全局快捷键"区域配置系统级热键，即使在全屏游戏或其他应用中也能生效：
+
+1. 点击快捷键输入框
+2. 按下你想要的按键组合（如 `Ctrl+Alt+Up`）
+3. 输入框会自动填充按键组合
+4. 设置调整步进值（默认 5）
+5. 点击"保存"应用
+
+**可用修饰键**：Ctrl、Shift、Alt、Win  
+**推荐组合**：
+- 亮度增加：`Ctrl+Alt+Up`
+- 亮度降低：`Ctrl+Alt+Down`
+- 色温增加：`Ctrl+Alt+Right`（偏冷白）
+- 色温降低：`Ctrl+Alt+Left`（偏暖白）
+
+留空某个快捷键可禁用该功能。使用系统级 `RegisterHotKey` API，确保在全屏独占游戏中也能响应。
 
 ### 桌面小部件
 
@@ -237,11 +263,19 @@ tests/                 pytest 单元测试套件
     "x": 100,
     "y": 100,
     "locked": true
-  }
+  },
+  "hotkey": {
+    "brightness_up": "Ctrl+Alt+Up",
+    "brightness_down": "Ctrl+Alt+Down",
+    "color_temp_up": "Ctrl+Alt+Right",
+    "color_temp_down": "Ctrl+Alt+Left",
+    "step": 5
+  },
+  "auto_check_update": true
 }
 ```
 
-`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`model` 留空时程序会在启动时通过 `info()` 自动探测并回填，避免协议错配。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` 两个独立开关控制程序启停时是否自动开/关灯。`widget` 段记录桌面小部件的位置、锁定状态与可见性。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
+`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`model` 留空时程序会在启动时通过 `info()` 自动探测并回填，避免协议错配。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` 两个独立开关控制程序启停时是否自动开/关灯。`widget` 段记录桌面小部件的位置、锁定状态与可见性。`hotkey` 段存储全局快捷键配置和调整步进值。`auto_check_update` 控制是否在启动时自动检查 GitHub Release 更新。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
 
 ## 常见问题
 

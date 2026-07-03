@@ -49,6 +49,9 @@ class TrayController:
         on_toggle_power_off_at_exit: Callable[[], None],
         light: Optional[object] = None,
         config: Optional[object] = None,
+        version_checker: Optional[object] = None,
+        on_toggle_auto_check_update: Optional[Callable[[], None]] = None,
+        get_auto_check_update: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._on_left_click = on_left_click
         self._on_open_settings = on_open_settings
@@ -59,45 +62,107 @@ class TrayController:
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
         self._light = light
         self._config = config
+        self._version_checker = version_checker
+        self._on_toggle_auto_check_update = on_toggle_auto_check_update
+        self._get_auto_check_update = get_auto_check_update
         self._desktop_widget: Optional[DesktopWidget] = None
+        self._title = title  # Store title before building menu
+
+        # Build menu dynamically to support update notification
+        self._build_menu()
+        self._thread: threading.Thread | None = None
+
+    def _build_menu(self) -> None:
+        """Build or rebuild the tray menu."""
+        menu_items = [
+            MenuItem("Open", self._handle_open, default=True, visible=False),
+            MenuItem("调整亮度", self._handle_open),
+            MenuItem("设置", self._handle_settings),
+            MenuItem(
+                "开机自启动",
+                self._handle_toggle_autostart,
+                checked=lambda _i: autostart.is_enabled(),
+            ),
+            MenuItem(
+                "灯跟随软件启动",
+                self._handle_toggle_power_on_at_startup,
+                checked=lambda _i: self._get_power_on_at_startup(),
+            ),
+            MenuItem(
+                "灯跟随软件关闭",
+                self._handle_toggle_power_off_at_exit,
+                checked=lambda _i: self._get_power_off_at_exit(),
+            ),
+            Menu.SEPARATOR,
+            MenuItem(
+                "固定在桌面上",
+                self._handle_toggle_desktop_widget,
+                checked=lambda _i: self._desktop_widget is not None and self._desktop_widget._visible,
+            ),
+        ]
+
+        # Add update menu items
+        if self._version_checker:
+            menu_items.append(Menu.SEPARATOR)
+
+            # Check if update is available
+            if self._version_checker.has_checked():
+                update_info = self._version_checker.get_update_info()
+                if update_info:
+                    menu_items.append(MenuItem(
+                        f"🔔 新版本可用: v{update_info['version']}",
+                        self._handle_download_update,
+                    ))
+
+            # Manual check for updates
+            menu_items.append(MenuItem("检查更新", self._handle_check_update))
+
+            # Auto-check toggle
+            if self._get_auto_check_update:
+                menu_items.append(MenuItem(
+                    "启动时自动检查更新",
+                    self._handle_toggle_auto_check_update,
+                    checked=lambda _i: self._get_auto_check_update(),
+                ))
+
+            # GitHub link
+            menu_items.append(MenuItem("访问 GitHub 主页", self._handle_open_github))
+
+        menu_items.append(Menu.SEPARATOR)
+        menu_items.append(MenuItem("退出", self._handle_exit))
 
         self._icon = pystray.Icon(
             "mi-monitor-light-tray",
             icon=make_tray_icon(64, on=True),
-            title=title,
-            menu=Menu(
-                MenuItem("Open", self._handle_open, default=True, visible=False),
-                MenuItem("调整亮度", self._handle_open),
-                MenuItem("设置", self._handle_settings),
-                MenuItem(
-                    "开机自启动",
-                    self._handle_toggle_autostart,
-                    checked=lambda _i: autostart.is_enabled(),
-                ),
-                MenuItem(
-                    "灯跟随软件启动",
-                    self._handle_toggle_power_on_at_startup,
-                    checked=lambda _i: self._get_power_on_at_startup(),
-                ),
-                MenuItem(
-                    "灯跟随软件关闭",
-                    self._handle_toggle_power_off_at_exit,
-                    checked=lambda _i: self._get_power_off_at_exit(),
-                ),
-                Menu.SEPARATOR,
-                MenuItem(
-                    "固定在桌面上",
-                    self._handle_toggle_desktop_widget,
-                    checked=lambda _i: self._desktop_widget is not None and self._desktop_widget._visible,
-                ),
-                MenuItem("退出", self._handle_exit),
-            ),
+            title=self._title,
+            menu=Menu(*menu_items),
         )
-        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
+        # Rebuild menu in case version check completed
+        if self._version_checker and self._version_checker.has_checked():
+            try:
+                self._build_menu()
+            except Exception as exc:
+                log.warning("Failed to build menu with version check: %s", exc)
         self._thread = threading.Thread(target=self._icon.run, name="tray", daemon=True)
         self._thread.start()
+
+    def refresh_menu_if_update_available(self) -> None:
+        """Rebuild menu if version check found an update (called from main thread)."""
+        if self._version_checker and self._version_checker.has_checked():
+            update_info = self._version_checker.get_update_info()
+            if update_info:
+                log.info("Update available, refreshing menu: v%s", update_info['version'])
+                try:
+                    # Rebuild the icon with new menu
+                    old_icon = self._icon
+                    self._build_menu()
+                    # Update the running icon's menu
+                    if hasattr(old_icon, '_menu_handle'):
+                        old_icon.update_menu()
+                except Exception as exc:
+                    log.warning("Failed to refresh menu: %s", exc)
 
     def stop(self) -> None:
         try:
@@ -106,6 +171,7 @@ class TrayController:
             log.debug("Tray icon stop failed", exc_info=True)
 
     def set_title(self, title: str) -> None:
+        self._title = title
         self._icon.title = title
 
     def set_state(self, on: bool) -> None:
@@ -187,3 +253,86 @@ class TrayController:
             self._icon.stop()
         except Exception:  # noqa: BLE001
             log.debug("Tray icon stop failed", exc_info=True)
+
+    def _handle_check_update(self, _icon, _item) -> None:
+        """Manually check for updates."""
+        if self._version_checker:
+            import threading
+            def check_and_notify():
+                log.info("Manually checking for updates...")
+                # Force a fresh check
+                from .version_checker import check_for_updates
+                update_info = check_for_updates()
+
+                # Update the checker's cache
+                self._version_checker._update_info = update_info
+                self._version_checker._checked = True
+
+                # Rebuild menu to show result
+                try:
+                    self._build_menu()
+                except Exception as exc:
+                    log.warning("Failed to rebuild menu: %s", exc)
+
+                # Show notification
+                if update_info:
+                    try:
+                        import tkinter as tk
+                        from tkinter import messagebox
+                        root = tk.Tk()
+                        root.withdraw()
+                        messagebox.showinfo(
+                            "发现新版本",
+                            f"新版本 v{update_info['version']} 可用！\n\n"
+                            f"点击托盘菜单 → 🔔 新版本可用 下载更新。",
+                            parent=root,
+                        )
+                        root.destroy()
+                    except Exception as exc:
+                        log.warning("Failed to show update dialog: %s", exc)
+                else:
+                    try:
+                        import tkinter as tk
+                        from tkinter import messagebox
+                        root = tk.Tk()
+                        root.withdraw()
+                        from .version_checker import get_current_version
+                        current = get_current_version()
+                        messagebox.showinfo(
+                            "已是最新版本",
+                            f"当前版本 v{current} 已是最新版本。",
+                            parent=root,
+                        )
+                        root.destroy()
+                    except Exception as exc:
+                        log.warning("Failed to show no-update dialog: %s", exc)
+
+            threading.Thread(target=check_and_notify, daemon=True).start()
+
+    def _handle_download_update(self, _icon, _item) -> None:
+        """Open the update download page in browser."""
+        if self._version_checker:
+            update_info = self._version_checker.get_update_info()
+            if update_info and update_info.get("url"):
+                import webbrowser
+                webbrowser.open(update_info["url"])
+                log.info("Opened update URL: %s", update_info["url"])
+
+    def _handle_open_github(self, _icon, _item) -> None:
+        """Open GitHub repository in browser."""
+        import webbrowser
+        url = "https://github.com/Martlnez/MiMonitorLightTray"
+        webbrowser.open(url)
+        log.info("Opened GitHub: %s", url)
+
+    def _handle_toggle_auto_check_update(self, icon, _item) -> None:
+        """Toggle auto-check for updates on startup."""
+        if self._on_toggle_auto_check_update:
+            try:
+                self._on_toggle_auto_check_update()
+            except Exception:  # noqa: BLE001
+                log.exception("auto_check_update toggle failed")
+            try:
+                icon.update_menu()
+            except Exception:  # noqa: BLE001
+                log.debug("update_menu failed", exc_info=True)

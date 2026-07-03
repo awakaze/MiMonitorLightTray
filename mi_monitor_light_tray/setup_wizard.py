@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Optional
 
-from .config import AppConfig, DeviceConfig
+from .config import AppConfig, DeviceConfig, HotkeyConfig
 from .miio_client import quick_ping
 from . import autostart
 from .cloud_login_window import CloudLoginWindow
@@ -221,17 +221,74 @@ class SetupWizard:
                  "尝试用通用 Light service spec 走 MIoT 协议。\n"
                  "若设备不兼容则会持续报错 — 取消勾选即可回到 legacy。")
 
+        # ── Hotkey Settings ───────────────────────────────────────────────────
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=8, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 8))
+
+        ttk.Label(
+            frm,
+            text="全局快捷键",
+            font=("Microsoft YaHei UI", 11, "bold"),
+            foreground="#1a1a1a",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 8))
+
+        self._hotkey_brightness_up_var = tk.StringVar(
+            value=self._config.hotkey.brightness_up)
+        self._hotkey_brightness_down_var = tk.StringVar(
+            value=self._config.hotkey.brightness_down)
+        self._hotkey_color_temp_up_var = tk.StringVar(
+            value=self._config.hotkey.color_temp_up)
+        self._hotkey_color_temp_down_var = tk.StringVar(
+            value=self._config.hotkey.color_temp_down)
+        self._hotkey_step_var = tk.IntVar(
+            value=self._config.hotkey.step)
+
+        hotkey_fields = [
+            ("亮度增加", self._hotkey_brightness_up_var,
+             "点击后按下按键组合，如: Ctrl+Alt+Up\n建议使用修饰键避免冲突，留空禁用"),
+            ("亮度降低", self._hotkey_brightness_down_var,
+             "点击后按下按键组合，如: Ctrl+Alt+Down\n建议使用修饰键避免冲突"),
+            ("色温增加", self._hotkey_color_temp_up_var,
+             "点击后按下按键组合，如: Ctrl+Alt+Right\n偏冷白，建议使用修饰键"),
+            ("色温降低", self._hotkey_color_temp_down_var,
+             "点击后按下按键组合，如: Ctrl+Alt+Left\n偏暖白，建议使用修饰键"),
+        ]
+
+        self._hotkey_entries = []
+        for i, (label, var, tip) in enumerate(hotkey_fields, start=10):
+            ttk.Label(frm, text=label).grid(row=i, column=0,
+                                            sticky="w", **pad)
+            e = ttk.Entry(frm, textvariable=var, width=30,
+                          font=("Consolas", 10))
+            e.grid(row=i, column=1, sticky="ew", **pad)
+            _Tooltip(e, tip)
+            # Bind key press event for hotkey capture
+            e.bind("<FocusIn>", lambda evt, entry=e: self._start_hotkey_capture(entry))
+            e.bind("<KeyPress>", lambda evt, entry=e, v=var: self._capture_hotkey(evt, entry, v))
+            e.bind("<FocusOut>", lambda evt, entry=e: self._end_hotkey_capture(entry))
+            self._hotkey_entries.append(e)
+
+        # Step size
+        step_row = ttk.Frame(frm, style="TFrame")
+        step_row.grid(row=14, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 0))
+        ttk.Label(step_row, text="调整步进值:").pack(side="left")
+        step_spinbox = ttk.Spinbox(step_row, from_=1, to=20, width=5,
+                                   textvariable=self._hotkey_step_var)
+        step_spinbox.pack(side="left", padx=(8, 4))
+        ttk.Label(step_row, text="(每次按快捷键的调整幅度)").pack(side="left")
+        _Tooltip(step_spinbox, "每次按快捷键时，亮度/色温增减的数值\n推荐: 5-10")
+
         frm.columnconfigure(1, weight=1)
 
         # ── Status + buttons ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self._status_var,
                   foreground="#0066cc"
-                  ).grid(row=8, column=0, columnspan=2,
+                  ).grid(row=15, column=0, columnspan=2,
                          sticky="w", padx=16)
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=9, column=0, columnspan=2,
+        btn_row.grid(row=16, column=0, columnspan=2,
                      sticky="e", pady=(12, 4), padx=16)
 
         ttk.Button(btn_row, text="取消",
@@ -302,6 +359,14 @@ class SetupWizard:
                                  parent=self._root)
             return
         self._config.device = dev
+        # Collect hotkey settings
+        self._config.hotkey = HotkeyConfig(
+            brightness_up=self._hotkey_brightness_up_var.get().strip(),
+            brightness_down=self._hotkey_brightness_down_var.get().strip(),
+            color_temp_up=self._hotkey_color_temp_up_var.get().strip(),
+            color_temp_down=self._hotkey_color_temp_down_var.get().strip(),
+            step=self._hotkey_step_var.get(),
+        )
         try:
             self._config.save()
         except OSError as exc:
@@ -316,6 +381,79 @@ class SetupWizard:
             self._root.destroy()
         except tk.TclError:
             pass
+
+    def _start_hotkey_capture(self, entry: ttk.Entry) -> None:
+        """Start capturing hotkey - select all text and prepare for new input."""
+        entry.select_range(0, tk.END)
+
+    def _end_hotkey_capture(self, entry: ttk.Entry) -> None:
+        """End hotkey capture - clear selection."""
+        try:
+            entry.select_clear()
+        except tk.TclError:
+            pass
+
+    def _capture_hotkey(self, event: tk.Event, entry: ttk.Entry, var: tk.StringVar) -> str:
+        """Capture a hotkey combination from keyboard event.
+
+        Args:
+            event: Tkinter key event
+            entry: The entry widget
+            var: StringVar to update
+
+        Returns:
+            "break" to prevent default handling
+        """
+        # Get modifiers - use more reliable bit masks
+        state = event.state
+
+        mods = []
+        # Control: 0x0004
+        if state & 0x0004:
+            mods.append("Ctrl")
+        # Shift: 0x0001
+        if state & 0x0001:
+            mods.append("Shift")
+        # Alt/Mod1: Check both common bit positions
+        # 0x20000 is the extended Alt bit, 0x0008 is Mod1
+        if state & 0x20000:
+            mods.append("Alt")
+        elif (state & 0x0008) and event.keysym in ("Alt_L", "Alt_R"):
+            # Only add Alt if it's actually an Alt key press
+            mods.append("Alt")
+        # Win/Super: 0x0040
+        if state & 0x0040:
+            mods.append("Win")
+
+        # Get key name
+        key = event.keysym
+
+        # Skip if only modifier pressed (user is building the combo)
+        if key in ("Control_L", "Control_R", "Shift_L", "Shift_R",
+                   "Alt_L", "Alt_R", "Win_L", "Win_R", "Super_L", "Super_R"):
+            # Show modifiers being pressed
+            if mods:
+                var.set("+".join(mods) + "+")
+            return "break"
+
+        # Map key names to friendly format
+        key_map = {
+            "Up": "Up", "Down": "Down", "Left": "Left", "Right": "Right",
+            "Return": "Enter", "BackSpace": "Backspace", "Escape": "Esc",
+            "space": "Space", "Tab": "Tab", "Delete": "Delete",
+            "Home": "Home", "End": "End", "Prior": "PageUp", "Next": "PageDown",
+        }
+        key = key_map.get(key, key)
+
+        # Build hotkey string
+        if mods:
+            hotkey = "+".join(mods) + "+" + key
+        else:
+            # No modifiers - show the key but warn that modifiers are recommended
+            hotkey = key
+
+        var.set(hotkey)
+        return "break"  # Prevent default handling
 
     def run(self) -> None:
         if self._owns_root:

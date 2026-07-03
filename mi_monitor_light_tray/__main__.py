@@ -34,10 +34,17 @@ class App:
         from .miio_client import MiMonitorLight
         from .tray import TrayController
         from .shutdown_listener import ShutdownListener
+        from .hotkey_manager import HotkeyManager
+        from .version_checker import VersionChecker
 
         self._config = config
         self._light = self._build_light(config, MiMonitorLight)
         self._flyout = FlyoutWindow(self._light, on_open_setup=self._open_settings)
+
+        # Initialize version checker
+        self._version_checker = VersionChecker()
+        self._update_available = False
+
         self._tray = TrayController(
             title=config.device.name or "Mi Monitor Light",
             on_left_click=self._on_tray_click,
@@ -49,8 +56,21 @@ class App:
             on_toggle_power_off_at_exit=self._toggle_power_off_at_exit,
             light=self._light,
             config=self._config,
+            version_checker=self._version_checker,
+            on_toggle_auto_check_update=self._toggle_auto_check_update,
+            get_auto_check_update=lambda: self._config.auto_check_update,
         )
         self._light.set_listener(self._on_state_changed)
+
+        # Initialize hotkey manager
+        self._hotkey_manager = HotkeyManager(
+            on_brightness_up=self._on_hotkey_brightness_up,
+            on_brightness_down=self._on_hotkey_brightness_down,
+            on_color_temp_up=self._on_hotkey_color_temp_up,
+            on_color_temp_down=self._on_hotkey_color_temp_down,
+        )
+        self._setup_hotkeys()
+
         # Cache the imports for later use.
         self._MiMonitorLight = MiMonitorLight
         # Track whether the shutdown has already run, so we don't double-fire
@@ -84,6 +104,37 @@ class App:
 
     def run(self) -> int:
         self._tray.start()
+
+        # Start version check in background if enabled (async, non-blocking)
+        if self._config.auto_check_update:
+            import threading
+            def delayed_check():
+                import time
+                time.sleep(3)  # Wait 3 seconds after startup
+                log.info("Starting background version check...")
+                self._version_checker.check_async()
+
+                # Wait for check to complete (poll for up to 10 seconds)
+                for _ in range(20):
+                    if self._version_checker.has_checked():
+                        break
+                    time.sleep(0.5)
+
+                if self._version_checker.has_checked():
+                    log.info("Version check completed")
+                    update_info = self._version_checker.get_update_info()
+
+                    # Refresh menu to show update indicator
+                    self._tray.refresh_menu_if_update_available()
+
+                    # Show notification popup if update available
+                    if update_info:
+                        log.info("New version available: v%s", update_info['version'])
+                        self._show_update_notification(update_info)
+                else:
+                    log.warning("Version check timed out")
+            threading.Thread(target=delayed_check, daemon=True).start()
+
         if self._config.device.power_on_at_startup:
             import threading
             threading.Thread(target=self._startup_power_on, daemon=True).start()
@@ -100,6 +151,7 @@ class App:
             # Primary shutdown path: clean tray "退出". Idempotent — atexit
             # backstop will see _shutdown_done and skip.
             self._run_shutdown_power_off()
+            self._hotkey_manager.stop()
             self._tray.stop()
         return 0
 
@@ -153,6 +205,16 @@ class App:
         except OSError as exc:
             log.warning("Failed to save power_off_at_exit: %s", exc)
             self._config.device.power_off_at_exit = not new_value
+
+    def _toggle_auto_check_update(self) -> None:
+        new_value = not self._config.auto_check_update
+        self._config.auto_check_update = new_value
+        try:
+            self._config.save()
+            log.info("auto_check_update toggled to %s", new_value)
+        except OSError as exc:
+            log.warning("Failed to save auto_check_update: %s", exc)
+            self._config.auto_check_update = not new_value
 
     # ---------- callbacks ----------
 
@@ -216,6 +278,8 @@ class App:
             self._light.color_temp_min, self._light.color_temp_max
         )
         self._tray.set_title(config.device.name or "Mi Monitor Light")
+        # Update hotkeys
+        self._setup_hotkeys()
         # Trigger a refresh to capture device_id and/or model if missing —
         # _on_model_resolved handles model persistence; we still need this
         # thread to backfill device_id, which has no listener.
@@ -241,6 +305,107 @@ class App:
 
     def _on_exit(self) -> None:
         self._flyout.shutdown()
+
+    def _show_update_notification(self, update_info: dict) -> None:
+        """Show update notification popup on the main Tk thread."""
+        def show_dialog():
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                import webbrowser
+
+                # Use existing flyout root for the dialog
+                root = self._flyout._root
+
+                result = messagebox.askyesno(
+                    "发现新版本",
+                    f"检测到新版本 v{update_info['version']}！\n\n"
+                    f"当前版本已过时，是否立即前往下载？\n\n"
+                    f"点击「是」在浏览器打开下载页\n"
+                    f"点击「否」稍后再说（可在托盘菜单中查看）",
+                    parent=root,
+                )
+
+                if result:
+                    url = update_info.get("url", "")
+                    if url:
+                        webbrowser.open(url)
+                        log.info("Opened update URL: %s", url)
+            except Exception as exc:
+                log.warning("Failed to show update notification: %s", exc)
+
+        # Schedule on the main Tk thread
+        try:
+            self._flyout._root.after(0, show_dialog)
+        except Exception as exc:
+            log.warning("Failed to schedule update dialog: %s", exc)
+
+    def _setup_hotkeys(self) -> None:
+        """Configure hotkeys based on current config."""
+        try:
+            self._hotkey_manager.set_hotkeys(
+                brightness_up=self._config.hotkey.brightness_up,
+                brightness_down=self._config.hotkey.brightness_down,
+                color_temp_up=self._config.hotkey.color_temp_up,
+                color_temp_down=self._config.hotkey.color_temp_down,
+            )
+            log.info("Hotkeys configured")
+        except Exception as exc:
+            log.warning("Failed to setup hotkeys: %s", exc)
+
+    def _on_hotkey_brightness_up(self) -> None:
+        """Hotkey callback: increase brightness."""
+        state = self._light.state
+        if not state.reachable:
+            return
+        current = state.brightness or 50
+        step = self._config.hotkey.step
+        new_value = min(100, current + step)
+        # Direct call - set_brightness is already immediate
+        self._light.set_brightness(new_value)
+        log.debug("Hotkey: brightness %d -> %d", current, new_value)
+
+    def _on_hotkey_brightness_down(self) -> None:
+        """Hotkey callback: decrease brightness."""
+        state = self._light.state
+        if not state.reachable:
+            return
+        current = state.brightness or 50
+        step = self._config.hotkey.step
+        new_value = max(1, current - step)
+        # Direct call - set_brightness is already immediate
+        self._light.set_brightness(new_value)
+        log.debug("Hotkey: brightness %d -> %d", current, new_value)
+
+    def _on_hotkey_color_temp_up(self) -> None:
+        """Hotkey callback: increase color temperature (cooler)."""
+        state = self._light.state
+        if not state.reachable:
+            return
+        current = state.color_temp or 4000
+        step = self._config.hotkey.step
+        # Scale step based on color temp range
+        ct_range = self._light.color_temp_max - self._light.color_temp_min
+        actual_step = int(ct_range * step / 100)  # step as percentage
+        new_value = min(self._light.color_temp_max, current + actual_step)
+        # Direct call - set_color_temp is already immediate
+        self._light.set_color_temp(new_value)
+        log.debug("Hotkey: color temp %d -> %d", current, new_value)
+
+    def _on_hotkey_color_temp_down(self) -> None:
+        """Hotkey callback: decrease color temperature (warmer)."""
+        state = self._light.state
+        if not state.reachable:
+            return
+        current = state.color_temp or 4000
+        step = self._config.hotkey.step
+        # Scale step based on color temp range
+        ct_range = self._light.color_temp_max - self._light.color_temp_min
+        actual_step = int(ct_range * step / 100)  # step as percentage
+        new_value = max(self._light.color_temp_min, current - actual_step)
+        # Direct call - set_color_temp is already immediate
+        self._light.set_color_temp(new_value)
+        log.debug("Hotkey: color temp %d -> %d", current, new_value)
 
 
 def _run_setup_only(config: AppConfig) -> int:

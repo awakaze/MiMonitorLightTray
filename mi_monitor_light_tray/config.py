@@ -45,6 +45,16 @@ class DeviceConfig:
 
 
 @dataclass
+class HotkeyConfig:
+    """全局快捷键配置。"""
+    brightness_up: str = ""  # 亮度增加快捷键，如 "ctrl+alt+up"
+    brightness_down: str = ""  # 亮度降低快捷键，如 "ctrl+alt+down"
+    color_temp_up: str = ""  # 色温增加快捷键，如 "ctrl+alt+right"
+    color_temp_down: str = ""  # 色温降低快捷键，如 "ctrl+alt+left"
+    step: int = 5  # 每次调整的步进值（亮度：1-100，色温按比例）
+
+
+@dataclass
 class WidgetConfig:
     """桌面小部件配置。"""
     visible: bool = False  # 是否显示
@@ -61,6 +71,8 @@ class WidgetConfig:
 class AppConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
     widget: WidgetConfig = field(default_factory=WidgetConfig)
+    hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
+    auto_check_update: bool = True  # 启动时自动检查更新
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "AppConfig":
@@ -80,7 +92,13 @@ class AppConfig:
         widget_data = data.get("widget", {})
         widget_known = {f for f in WidgetConfig.__dataclass_fields__}
         widget = WidgetConfig(**{k: v for k, v in widget_data.items() if k in widget_known})
-        return cls(device=dev, widget=widget)
+        # 加载快捷键配置
+        hotkey_data = data.get("hotkey", {})
+        hotkey_known = {f for f in HotkeyConfig.__dataclass_fields__}
+        hotkey = HotkeyConfig(**{k: v for k, v in hotkey_data.items() if k in hotkey_known})
+        # 加载自动更新检查配置
+        auto_check_update = data.get("auto_check_update", True)
+        return cls(device=dev, widget=widget, hotkey=hotkey, auto_check_update=auto_check_update)
 
     def save(self, path: Optional[Path] = None) -> None:
         path = path or default_config_path()
@@ -88,6 +106,8 @@ class AppConfig:
         payload = {
             "device": asdict(self.device),
             "widget": asdict(self.widget),
+            "hotkey": asdict(self.hotkey),
+            "auto_check_update": self.auto_check_update,
         }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
