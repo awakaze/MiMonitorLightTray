@@ -1,16 +1,24 @@
 """Monitor and system power state listener.
 
-Detects monitor sleep/wake via user idle time detection, and system
-suspend/resume via Windows power broadcast messages.
+Uses only Windows power broadcast messages (WM_POWERBROADCAST). No idle-time
+polling — display state and system suspend/resume come exclusively from the
+OS so we stay in sync with what Windows itself considers a display-off event.
+
+On modern Windows (10/11), Microsoft has stopped broadcasting
+`PBT_APMSUSPEND` / resume events to all top-level windows on Modern Standby
+capable machines. Applications are required to explicitly register via
+`RegisterSuspendResumeNotification` to keep receiving them. We register with
+`DEVICE_NOTIFY_WINDOW_HANDLE` so the notifications still arrive as
+`WM_POWERBROADCAST` on our hidden top-level window.
 """
 
 from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import itertools
 import logging
 import threading
-import time
 from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
@@ -20,13 +28,35 @@ log = logging.getLogger(__name__)
 
 WM_POWERBROADCAST = 0x0218
 WM_DESTROY = 0x0002
+WM_CLOSE = 0x0010
 
 # WM_POWERBROADCAST wparam values
 PBT_APMSUSPEND = 0x0004
-PBT_APMRESUMEAUTOMATIC = 0x0012
 PBT_APMRESUMESUSPEND = 0x0007
-PBT_APMPOWERSTATUSCHANGE = 0x000A
+PBT_APMRESUMEAUTOMATIC = 0x0012
 PBT_POWERSETTINGCHANGE = 0x8013
+
+# Register*Notification flags
+DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
+
+# GUID_CONSOLE_DISPLAY_STATE = {6fe69556-704a-47a0-8f24-c28d936fda47}
+# Correct for Windows 8+. GUID_MONITOR_POWER_ON ({02731015-...}) is deprecated.
+_GUID_CONSOLE_DISPLAY_STATE_BYTES = (
+    b"\x56\x95\xe6\x6f"
+    b"\x4a\x70"
+    b"\xa0\x47"
+    b"\x8f\x24\xc2\x8d\x93\x6f\xda\x47"
+)
+
+# Display state values (from POWERBROADCAST_SETTING.Data for the display GUID)
+DISPLAY_STATE_OFF = 0
+DISPLAY_STATE_ON = 1
+DISPLAY_STATE_DIMMED = 2
+
+
+# Give each listener instance a fresh window-class name so restarting the
+# listener never hits ERROR_CLASS_ALREADY_EXISTS against a stale WNDPROC.
+_class_name_counter = itertools.count(1)
 
 
 # WndProc signature
@@ -54,10 +84,30 @@ class _WNDCLASS(ctypes.Structure):
     ]
 
 
-class _LASTINPUTINFO(ctypes.Structure):
+class _GUID(ctypes.Structure):
     _fields_ = [
-        ('cbSize', ctypes.c_uint),
-        ('dwTime', ctypes.c_uint),
+        ("Data1", ctypes.c_ulong),
+        ("Data2", ctypes.c_ushort),
+        ("Data3", ctypes.c_ushort),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+    @classmethod
+    def from_bytes(cls, buf: bytes) -> "_GUID":
+        assert len(buf) == 16
+        g = cls()
+        ctypes.memmove(ctypes.byref(g), buf, 16)
+        return g
+
+    def to_bytes(self) -> bytes:
+        return bytes(bytearray(memoryview(ctypes.string_at(ctypes.byref(self), 16))))
+
+
+class _POWERBROADCAST_SETTING(ctypes.Structure):
+    _fields_ = [
+        ("PowerSetting", _GUID),
+        ("DataLength", ctypes.wintypes.DWORD),
+        ("Data", ctypes.c_ubyte * 4),
     ]
 
 
@@ -71,47 +121,65 @@ def _configure_user32(user32):
     ]
     user32.CreateWindowExW.restype = ctypes.wintypes.HWND
     user32.RegisterClassW.restype = ctypes.wintypes.ATOM
+    user32.UnregisterClassW.restype = ctypes.wintypes.BOOL
+    user32.UnregisterClassW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.HINSTANCE,
+    ]
+    user32.DestroyWindow.restype = ctypes.wintypes.BOOL
+    user32.DestroyWindow.argtypes = [ctypes.wintypes.HWND]
     user32.GetMessageW.argtypes = [
         ctypes.c_void_p,
         ctypes.wintypes.HWND,
         ctypes.wintypes.UINT,
         ctypes.wintypes.UINT,
     ]
-
-
-def _get_idle_time_ms() -> int:
-    """Get user idle time in milliseconds."""
-    try:
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-
-        lii = _LASTINPUTINFO()
-        lii.cbSize = ctypes.sizeof(_LASTINPUTINFO)
-
-        if user32.GetLastInputInfo(ctypes.byref(lii)):
-            millis = kernel32.GetTickCount()
-            return millis - lii.dwTime
-        return 0
-    except Exception:  # noqa: BLE001
-        return 0
+    user32.PostMessageW.restype = ctypes.wintypes.BOOL
+    user32.PostMessageW.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.UINT,
+        ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    ]
+    user32.RegisterPowerSettingNotification.restype = ctypes.c_void_p
+    user32.RegisterPowerSettingNotification.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.c_void_p,  # LPCGUID
+        ctypes.wintypes.DWORD,
+    ]
+    user32.UnregisterPowerSettingNotification.restype = ctypes.wintypes.BOOL
+    user32.UnregisterPowerSettingNotification.argtypes = [ctypes.c_void_p]
+    # RegisterSuspendResumeNotification exists on Windows 8+ (user32.dll).
+    # It's how modern-standby machines still deliver PBT_APMSUSPEND / resume
+    # to hidden top-level windows.
+    if hasattr(user32, "RegisterSuspendResumeNotification"):
+        user32.RegisterSuspendResumeNotification.restype = ctypes.c_void_p
+        user32.RegisterSuspendResumeNotification.argtypes = [
+            ctypes.wintypes.HANDLE,
+            ctypes.wintypes.DWORD,
+        ]
+    if hasattr(user32, "UnregisterSuspendResumeNotification"):
+        user32.UnregisterSuspendResumeNotification.restype = ctypes.wintypes.BOOL
+        user32.UnregisterSuspendResumeNotification.argtypes = [ctypes.c_void_p]
 
 
 class MonitorSleepListener:
     """Detects monitor sleep/wake and system suspend/resume events.
 
-    Monitor sleep/wake is detected via user idle time (55 second threshold).
-    System suspend/resume is detected via WM_POWERBROADCAST messages.
+    Everything comes from WM_POWERBROADCAST on a hidden top-level window:
+        - PBT_POWERSETTINGCHANGE + GUID_CONSOLE_DISPLAY_STATE → monitor on/off/dim
+          (via `RegisterPowerSettingNotification`)
+        - PBT_APMSUSPEND → system suspend
+        - PBT_APMRESUMEAUTOMATIC / PBT_APMRESUMESUSPEND → system resume
+          (via `RegisterSuspendResumeNotification` — required on modern Windows
+          where top-level broadcasts are no longer delivered by default).
 
     Callbacks (all optional):
-        on_monitor_sleep: Called when user is idle >= threshold
-        on_monitor_wake: Called when user becomes active again
-        on_system_suspend: Called when system goes to sleep/hibernate
-        on_system_resume: Called when system resumes from sleep/hibernate
+        on_monitor_sleep: Called when Windows turns the display off
+        on_monitor_wake: Called when Windows turns the display back on
+        on_system_suspend: Called when the system goes to sleep/hibernate
+        on_system_resume: Called when the system resumes from sleep/hibernate
     """
-
-    _CLASS_NAME = "MiMonitorLightPowerListener"
-    CHECK_INTERVAL = 1.0
-    IDLE_THRESHOLD_MS = 55 * 1000  # 55 seconds
 
     def __init__(
         self,
@@ -126,37 +194,48 @@ class MonitorSleepListener:
         self._on_system_resume = on_system_resume
         self._ready = threading.Event()
         self._stop_event = threading.Event()
-        self._monitor_is_off = False
+        # Track the last display state we broadcast so we don't fire the same
+        # transition twice (Windows may send several PBT_POWERSETTINGCHANGE
+        # events for the same underlying state).
+        self._display_on = True
+        self._power_notify_handle: Optional[int] = None
+        self._suspend_notify_handle: Optional[int] = None
         self._hwnd: Optional[int] = None
         self._wndproc_ref: Optional[_WNDPROC] = None
+        self._class_name = (
+            f"MiMonitorLightPowerListener_{next(_class_name_counter)}"
+        )
 
         self._window_thread = threading.Thread(
             target=self._run_window, name="power-listener-window", daemon=True
         )
-        self._monitor_thread = threading.Thread(
-            target=self._run_monitor, name="power-listener-idle", daemon=True
-        )
 
     def start(self) -> None:
-        log.info("Starting power state listener")
+        log.info("Starting power state listener (class=%s)", self._class_name)
         self._window_thread.start()
-        self._monitor_thread.start()
         self._ready.wait(timeout=2.0)
 
     def stop(self) -> None:
-        """Stop the listener threads."""
+        """Stop the listener thread."""
         self._stop_event.set()
         if self._hwnd:
             try:
-                user32 = ctypes.windll.user32
-                user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.PostMessageW.restype = ctypes.wintypes.BOOL
+                user32.PostMessageW.argtypes = [
+                    ctypes.wintypes.HWND,
+                    ctypes.wintypes.UINT,
+                    ctypes.wintypes.WPARAM,
+                    ctypes.wintypes.LPARAM,
+                ]
+                user32.PostMessageW(self._hwnd, WM_CLOSE, 0, 0)
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("PostMessage(WM_CLOSE) failed", exc_info=True)
 
     def _fire_monitor_sleep(self) -> None:
-        if not self._monitor_is_off:
-            self._monitor_is_off = True
-            log.info("Monitor sleep detected (idle timeout)")
+        if self._display_on:
+            self._display_on = False
+            log.info("Monitor sleep (display off broadcast)")
             if self._on_monitor_sleep:
                 try:
                     self._on_monitor_sleep()
@@ -164,9 +243,9 @@ class MonitorSleepListener:
                     log.exception("on_monitor_sleep callback raised")
 
     def _fire_monitor_wake(self) -> None:
-        if self._monitor_is_off:
-            self._monitor_is_off = False
-            log.info("Monitor wake detected (user activity)")
+        if not self._display_on:
+            self._display_on = True
+            log.info("Monitor wake (display on broadcast)")
             if self._on_monitor_wake:
                 try:
                     self._on_monitor_wake()
@@ -183,53 +262,85 @@ class MonitorSleepListener:
 
     def _fire_system_resume(self) -> None:
         log.info("System resume detected")
+        # After resume Windows re-sends a display-on event; reset tracked
+        # state so the next off→on transition isn't swallowed.
+        self._display_on = True
         if self._on_system_resume:
             try:
                 self._on_system_resume()
             except Exception:  # noqa: BLE001
                 log.exception("on_system_resume callback raised")
 
-    def _run_monitor(self) -> None:
-        """Idle time monitoring for monitor sleep/wake detection."""
-        log.debug("Idle monitor thread started")
+    def _handle_power_setting_change(self, lparam: int) -> None:
+        """Parse a PBT_POWERSETTINGCHANGE payload and fire monitor callbacks."""
+        try:
+            setting = ctypes.cast(
+                lparam, ctypes.POINTER(_POWERBROADCAST_SETTING)
+            ).contents
 
-        while not self._stop_event.is_set():
-            try:
-                idle_ms = _get_idle_time_ms()
+            guid_bytes = setting.PowerSetting.to_bytes()
+            if guid_bytes != _GUID_CONSOLE_DISPLAY_STATE_BYTES:
+                log.debug(
+                    "PBT_POWERSETTINGCHANGE for unrelated GUID: %s",
+                    guid_bytes.hex(),
+                )
+                return
 
-                if idle_ms >= self.IDLE_THRESHOLD_MS:
-                    self._fire_monitor_sleep()
-                else:
-                    self._fire_monitor_wake()
+            if setting.DataLength < 1:
+                log.warning(
+                    "POWERBROADCAST_SETTING has zero DataLength for display GUID"
+                )
+                return
 
-            except Exception:  # noqa: BLE001
-                log.debug("Idle check failed", exc_info=True)
+            # The payload for the display GUID is a DWORD (0/1/2). Reading
+            # the low byte is enough on little-endian Windows.
+            state = int(setting.Data[0])
+            log.info(
+                "Display state broadcast: %s (0=off, 1=on, 2=dim)", state
+            )
 
-            self._stop_event.wait(self.CHECK_INTERVAL)
+            if state == DISPLAY_STATE_OFF:
+                self._fire_monitor_sleep()
+            elif state == DISPLAY_STATE_ON:
+                self._fire_monitor_wake()
+            # DISPLAY_STATE_DIMMED (2) is ignored — the monitor is still on.
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to parse POWERBROADCAST_SETTING")
 
     def _run_window(self) -> None:
-        """Message loop for WM_POWERBROADCAST events (system suspend/resume).
+        """Message loop for WM_POWERBROADCAST events.
 
-        System-wide power events like PBT_APMSUSPEND are broadcast to all
-        top-level windows in the system. We create a hidden top-level window
-        to receive these broadcasts.
+        System-wide power events (PBT_APMSUSPEND etc.) are broadcast to every
+        top-level window in the system on legacy Windows, but modern-standby
+        machines require an explicit `RegisterSuspendResumeNotification` call.
+        Message-only windows (HWND_MESSAGE) never receive these events.
         """
+        user32 = None
+        atom = 0
         try:
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             _configure_user32(user32)
 
             h_instance = kernel32.GetModuleHandleW(None)
 
             def wndproc(hwnd, msg, wparam, lparam):
                 if msg == WM_POWERBROADCAST:
-                    log.debug("WM_POWERBROADCAST received: wparam=0x%x", wparam)
+                    log.info(
+                        "WM_POWERBROADCAST wparam=0x%x lparam=0x%x",
+                        wparam,
+                        lparam,
+                    )
                     if wparam == PBT_APMSUSPEND:
                         self._fire_system_suspend()
                     elif wparam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
                         self._fire_system_resume()
-                        self._monitor_is_off = False
+                    elif wparam == PBT_POWERSETTINGCHANGE:
+                        self._handle_power_setting_change(lparam)
                     return 1
+                if msg == WM_CLOSE:
+                    user32.DestroyWindow(hwnd)
+                    return 0
                 if msg == WM_DESTROY:
                     user32.PostQuitMessage(0)
                     return 0
@@ -247,44 +358,94 @@ class MonitorSleepListener:
             wc.hCursor = None
             wc.hbrBackground = None
             wc.lpszMenuName = None
-            wc.lpszClassName = self._CLASS_NAME
+            wc.lpszClassName = self._class_name
 
             atom = user32.RegisterClassW(ctypes.byref(wc))
             if not atom:
                 err = ctypes.get_last_error()
-                log.debug("RegisterClassW failed: %s", err)
+                log.error("RegisterClassW failed: err=%s", err)
+                self._ready.set()
+                return
 
-            # Create a top-level window (HWND_MESSAGE-style windows do NOT
-            # receive WM_POWERBROADCAST broadcasts; we need a real top-level).
-            # Use WS_OVERLAPPED and don't show it — invisible but top-level.
+            # Hidden top-level window. HWND_MESSAGE won't get system broadcasts.
             WS_OVERLAPPED = 0x00000000
             hwnd = user32.CreateWindowExW(
                 0,
-                self._CLASS_NAME,
+                self._class_name,
                 "MiMonitorLight Power Listener",
                 WS_OVERLAPPED,
                 0, 0, 0, 0,
-                0,  # HWND_DESKTOP as parent (top-level)
-                0,
+                0,   # no parent → top-level
+                0,   # no menu
                 h_instance,
                 None,
             )
             if not hwnd:
                 err = ctypes.get_last_error()
-                log.error("CreateWindowExW failed: %s", err)
+                log.error("CreateWindowExW failed: err=%s", err)
                 self._ready.set()
                 return
 
             self._hwnd = hwnd
-            log.info("Power listener window created: hwnd=0x%x", hwnd)
+            log.info(
+                "Power listener window created (hwnd=0x%x, class=%s)",
+                hwnd,
+                self._class_name,
+            )
+
+            # 1) Subscribe to display-state changes. Without this the display
+            #    GUID's PBT_POWERSETTINGCHANGE messages are never delivered.
+            guid_struct = _GUID.from_bytes(_GUID_CONSOLE_DISPLAY_STATE_BYTES)
+            handle = user32.RegisterPowerSettingNotification(
+                hwnd,
+                ctypes.byref(guid_struct),
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+            if not handle:
+                err = ctypes.get_last_error()
+                log.error(
+                    "RegisterPowerSettingNotification failed: err=%s", err
+                )
+            else:
+                self._power_notify_handle = handle
+                log.info(
+                    "Registered for GUID_CONSOLE_DISPLAY_STATE notifications"
+                )
+
+            # 2) Subscribe to suspend/resume. On Modern Standby capable
+            #    machines (Win10/11) top-level PBT_APMSUSPEND broadcasts are
+            #    NOT delivered by default — explicit registration is required.
+            if hasattr(user32, "RegisterSuspendResumeNotification"):
+                sr_handle = user32.RegisterSuspendResumeNotification(
+                    hwnd, DEVICE_NOTIFY_WINDOW_HANDLE
+                )
+                if not sr_handle:
+                    err = ctypes.get_last_error()
+                    log.error(
+                        "RegisterSuspendResumeNotification failed: err=%s",
+                        err,
+                    )
+                else:
+                    self._suspend_notify_handle = sr_handle
+                    log.info("Registered for suspend/resume notifications")
+            else:
+                log.warning(
+                    "RegisterSuspendResumeNotification not available; "
+                    "system suspend detection may not work on modern Windows"
+                )
 
             self._ready.set()
 
-            # Message loop
+            # Message loop.
             msg = ctypes.wintypes.MSG()
             while True:
                 ret = user32.GetMessageW(ctypes.byref(msg), 0, 0, 0)
-                if ret <= 0:
+                if ret == 0:
+                    log.info("Power listener received WM_QUIT — exiting loop")
+                    break
+                if ret == -1:
+                    err = ctypes.get_last_error()
+                    log.error("GetMessageW failed: err=%s", err)
                     break
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
@@ -292,3 +453,37 @@ class MonitorSleepListener:
         except Exception:
             log.exception("Power listener thread crashed")
             self._ready.set()
+        finally:
+            if user32 is not None:
+                if self._power_notify_handle:
+                    try:
+                        user32.UnregisterPowerSettingNotification(
+                            self._power_notify_handle
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.debug(
+                            "UnregisterPowerSettingNotification failed",
+                            exc_info=True,
+                        )
+                    self._power_notify_handle = None
+                if self._suspend_notify_handle and hasattr(
+                    user32, "UnregisterSuspendResumeNotification"
+                ):
+                    try:
+                        user32.UnregisterSuspendResumeNotification(
+                            self._suspend_notify_handle
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.debug(
+                            "UnregisterSuspendResumeNotification failed",
+                            exc_info=True,
+                        )
+                    self._suspend_notify_handle = None
+                if atom:
+                    try:
+                        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                        h_instance = kernel32.GetModuleHandleW(None)
+                        user32.UnregisterClassW(self._class_name, h_instance)
+                    except Exception:  # noqa: BLE001
+                        log.debug("UnregisterClassW failed", exc_info=True)
+            self._hwnd = None
