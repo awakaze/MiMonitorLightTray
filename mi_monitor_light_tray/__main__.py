@@ -34,6 +34,7 @@ class App:
         from .miio_client import MiMonitorLight
         from .tray import TrayController
         from .shutdown_listener import ShutdownListener
+        from .monitor_sleep_listener import MonitorSleepListener
         from .hotkey_manager import HotkeyManager
         from .version_checker import VersionChecker
 
@@ -54,6 +55,12 @@ class App:
             on_toggle_power_on_at_startup=self._toggle_power_on_at_startup,
             get_power_off_at_exit=lambda: self._config.device.power_off_at_exit,
             on_toggle_power_off_at_exit=self._toggle_power_off_at_exit,
+            get_power_off_on_monitor_sleep=lambda: self._config.device.power_off_on_monitor_sleep,
+            on_toggle_power_off_on_monitor_sleep=self._toggle_power_off_on_monitor_sleep,
+            get_power_off_on_system_suspend=lambda: self._config.device.power_off_on_system_suspend,
+            on_toggle_power_off_on_system_suspend=self._toggle_power_off_on_system_suspend,
+            get_power_on_on_system_resume=lambda: self._config.device.power_on_on_system_resume,
+            on_toggle_power_on_on_system_resume=self._toggle_power_on_on_system_resume,
             light=self._light,
             config=self._config,
             version_checker=self._version_checker,
@@ -70,6 +77,22 @@ class App:
             on_color_temp_down=self._on_hotkey_color_temp_down,
         )
         self._setup_hotkeys()
+
+        # Initialize monitor/system power listener
+        self._monitor_sleep_listener = MonitorSleepListener(
+            on_monitor_sleep=self._on_monitor_sleep if config.device.power_off_on_monitor_sleep else None,
+            on_monitor_wake=self._on_monitor_wake if config.device.power_off_on_monitor_sleep else None,
+            on_system_suspend=self._on_system_suspend if config.device.power_off_on_system_suspend else None,
+            on_system_resume=self._on_system_resume if config.device.power_on_on_system_resume else None,
+        )
+        if (config.device.power_off_on_monitor_sleep
+                or config.device.power_off_on_system_suspend
+                or config.device.power_on_on_system_resume):
+            self._monitor_sleep_listener.start()
+            log.info("Power state listener started")
+
+        # Track light state before monitor sleep for restoration
+        self._light_was_on_before_sleep = False
 
         # Cache the imports for later use.
         self._MiMonitorLight = MiMonitorLight
@@ -206,6 +229,99 @@ class App:
             log.warning("Failed to save power_off_at_exit: %s", exc)
             self._config.device.power_off_at_exit = not new_value
 
+    def _toggle_power_off_on_monitor_sleep(self) -> None:
+        new_value = not self._config.device.power_off_on_monitor_sleep
+        self._config.device.power_off_on_monitor_sleep = new_value
+        try:
+            self._config.save()
+            log.info("power_off_on_monitor_sleep toggled to %s", new_value)
+            # Restart listener with new callbacks
+            self._restart_power_listener()
+        except OSError as exc:
+            log.warning("Failed to save power_off_on_monitor_sleep: %s", exc)
+            self._config.device.power_off_on_monitor_sleep = not new_value
+
+    def _toggle_power_off_on_system_suspend(self) -> None:
+        new_value = not self._config.device.power_off_on_system_suspend
+        self._config.device.power_off_on_system_suspend = new_value
+        try:
+            self._config.save()
+            log.info("power_off_on_system_suspend toggled to %s", new_value)
+            self._restart_power_listener()
+        except OSError as exc:
+            log.warning("Failed to save power_off_on_system_suspend: %s", exc)
+            self._config.device.power_off_on_system_suspend = not new_value
+
+    def _toggle_power_on_on_system_resume(self) -> None:
+        new_value = not self._config.device.power_on_on_system_resume
+        self._config.device.power_on_on_system_resume = new_value
+        try:
+            self._config.save()
+            log.info("power_on_on_system_resume toggled to %s", new_value)
+            self._restart_power_listener()
+        except OSError as exc:
+            log.warning("Failed to save power_on_on_system_resume: %s", exc)
+            self._config.device.power_on_on_system_resume = not new_value
+
+    def _restart_power_listener(self) -> None:
+        """Restart the monitor/system power listener with updated callbacks."""
+        if hasattr(self, '_monitor_sleep_listener'):
+            self._monitor_sleep_listener.stop()
+
+        from .monitor_sleep_listener import MonitorSleepListener
+        self._monitor_sleep_listener = MonitorSleepListener(
+            on_monitor_sleep=self._on_monitor_sleep if self._config.device.power_off_on_monitor_sleep else None,
+            on_monitor_wake=self._on_monitor_wake if self._config.device.power_off_on_monitor_sleep else None,
+            on_system_suspend=self._on_system_suspend if self._config.device.power_off_on_system_suspend else None,
+            on_system_resume=self._on_system_resume if self._config.device.power_on_on_system_resume else None,
+        )
+
+        if (self._config.device.power_off_on_monitor_sleep
+                or self._config.device.power_off_on_system_suspend
+                or self._config.device.power_on_on_system_resume):
+            self._monitor_sleep_listener.start()
+            log.info("Power state listener restarted")
+
+    def _on_monitor_sleep(self) -> None:
+        """Called when monitor goes to sleep."""
+        if not self._config.device.power_off_on_monitor_sleep:
+            return
+        log.info("Monitor sleep event - turning off light")
+        # Save current light state
+        state = self._light.state
+        self._light_was_on_before_sleep = state.is_on
+        # Turn off light if it's on
+        if state.is_on:
+            import threading
+            threading.Thread(target=lambda: self._light.set_power(False), daemon=True).start()
+
+    def _on_monitor_wake(self) -> None:
+        """Called when monitor wakes up."""
+        if not self._config.device.power_off_on_monitor_sleep:
+            return
+        log.info("Monitor wake event - restoring light state")
+        # Restore light state if it was on before sleep
+        if self._light_was_on_before_sleep:
+            import threading
+            threading.Thread(target=lambda: self._light.set_power(True), daemon=True).start()
+            self._light_was_on_before_sleep = False
+
+    def _on_system_suspend(self) -> None:
+        """Called when system goes to sleep/hibernate."""
+        if not self._config.device.power_off_on_system_suspend:
+            return
+        log.info("System suspend event - turning off light")
+        import threading
+        threading.Thread(target=lambda: self._light.set_power(False), daemon=True).start()
+
+    def _on_system_resume(self) -> None:
+        """Called when system resumes from sleep/hibernate."""
+        if not self._config.device.power_on_on_system_resume:
+            return
+        log.info("System resume event - turning on light")
+        import threading
+        threading.Thread(target=lambda: self._light.set_power(True), daemon=True).start()
+
     def _toggle_auto_check_update(self) -> None:
         new_value = not self._config.auto_check_update
         self._config.auto_check_update = new_value
@@ -280,6 +396,8 @@ class App:
         self._tray.set_title(config.device.name or "Mi Monitor Light")
         # Update hotkeys
         self._setup_hotkeys()
+        # Update monitor/system power listener
+        self._restart_power_listener()
         # Trigger a refresh to capture device_id and/or model if missing —
         # _on_model_resolved handles model persistence; we still need this
         # thread to backfill device_id, which has no listener.

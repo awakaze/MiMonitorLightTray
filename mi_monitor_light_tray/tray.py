@@ -47,6 +47,12 @@ class TrayController:
         on_toggle_power_on_at_startup: Callable[[], None],
         get_power_off_at_exit: Callable[[], bool],
         on_toggle_power_off_at_exit: Callable[[], None],
+        get_power_off_on_monitor_sleep: Callable[[], bool],
+        on_toggle_power_off_on_monitor_sleep: Callable[[], None],
+        get_power_off_on_system_suspend: Callable[[], bool],
+        on_toggle_power_off_on_system_suspend: Callable[[], None],
+        get_power_on_on_system_resume: Callable[[], bool],
+        on_toggle_power_on_on_system_resume: Callable[[], None],
         light: Optional[object] = None,
         config: Optional[object] = None,
         version_checker: Optional[object] = None,
@@ -60,6 +66,12 @@ class TrayController:
         self._on_toggle_power_on_at_startup = on_toggle_power_on_at_startup
         self._get_power_off_at_exit = get_power_off_at_exit
         self._on_toggle_power_off_at_exit = on_toggle_power_off_at_exit
+        self._get_power_off_on_monitor_sleep = get_power_off_on_monitor_sleep
+        self._on_toggle_power_off_on_monitor_sleep = on_toggle_power_off_on_monitor_sleep
+        self._get_power_off_on_system_suspend = get_power_off_on_system_suspend
+        self._on_toggle_power_off_on_system_suspend = on_toggle_power_off_on_system_suspend
+        self._get_power_on_on_system_resume = get_power_on_on_system_resume
+        self._on_toggle_power_on_on_system_resume = on_toggle_power_on_on_system_resume
         self._light = light
         self._config = config
         self._version_checker = version_checker
@@ -92,6 +104,21 @@ class TrayController:
                 "灯跟随软件关闭",
                 self._handle_toggle_power_off_at_exit,
                 checked=lambda _i: self._get_power_off_at_exit(),
+            ),
+            MenuItem(
+                "灯随显示器休眠开关",
+                self._handle_toggle_power_off_on_monitor_sleep,
+                checked=lambda _i: self._get_power_off_on_monitor_sleep(),
+            ),
+            MenuItem(
+                "系统休眠时关灯",
+                self._handle_toggle_power_off_on_system_suspend,
+                checked=lambda _i: self._get_power_off_on_system_suspend(),
+            ),
+            MenuItem(
+                "系统唤醒时开灯",
+                self._handle_toggle_power_on_on_system_resume,
+                checked=lambda _i: self._get_power_on_on_system_resume(),
             ),
             Menu.SEPARATOR,
             MenuItem(
@@ -218,6 +245,36 @@ class TrayController:
         except Exception:  # noqa: BLE001
             log.debug("update_menu failed", exc_info=True)
 
+    def _handle_toggle_power_off_on_monitor_sleep(self, icon, _item) -> None:
+        try:
+            self._on_toggle_power_off_on_monitor_sleep()
+        except Exception:  # noqa: BLE001
+            log.exception("power_off_on_monitor_sleep toggle failed")
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.debug("update_menu failed", exc_info=True)
+
+    def _handle_toggle_power_off_on_system_suspend(self, icon, _item) -> None:
+        try:
+            self._on_toggle_power_off_on_system_suspend()
+        except Exception:  # noqa: BLE001
+            log.exception("power_off_on_system_suspend toggle failed")
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.debug("update_menu failed", exc_info=True)
+
+    def _handle_toggle_power_on_on_system_resume(self, icon, _item) -> None:
+        try:
+            self._on_toggle_power_on_on_system_resume()
+        except Exception:  # noqa: BLE001
+            log.exception("power_on_on_system_resume toggle failed")
+        try:
+            icon.update_menu()
+        except Exception:  # noqa: BLE001
+            log.debug("update_menu failed", exc_info=True)
+
     def _handle_toggle_desktop_widget(self, icon, _item) -> None:
         """切换桌面小部件的显示状态。"""
         if self._light is None:
@@ -284,7 +341,7 @@ class TrayController:
                         messagebox.showinfo(
                             "发现新版本",
                             f"新版本 v{update_info['version']} 可用！\n\n"
-                            f"点击托盘菜单 → 🔔 新版本可用 下载更新。",
+                            f"右键托盘菜单 → 访问Github 下载更新。",
                             parent=root,
                         )
                         root.destroy()

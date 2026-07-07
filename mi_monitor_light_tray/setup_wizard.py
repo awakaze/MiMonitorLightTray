@@ -208,13 +208,40 @@ class SetupWizard:
         cb_off.grid(row=6, column=1, sticky="w", padx=16, pady=(4, 0))
         _Tooltip(cb_off, "勾选后：程序退出时自动关灯")
 
+        self._power_off_on_monitor_sleep_var = tk.BooleanVar(
+            value=self._config.device.power_off_on_monitor_sleep)
+        cb_monitor = ttk.Checkbutton(
+            frm, text="灯随显示器休眠开关",
+            variable=self._power_off_on_monitor_sleep_var,
+        )
+        cb_monitor.grid(row=7, column=0, sticky="w", padx=16, pady=(4, 0))
+        _Tooltip(cb_monitor, "勾选后：显示器休眠时自动关灯\n显示器唤醒时自动开灯")
+
+        self._power_off_on_system_suspend_var = tk.BooleanVar(
+            value=self._config.device.power_off_on_system_suspend)
+        cb_system_off = ttk.Checkbutton(
+            frm, text="系统休眠时关灯",
+            variable=self._power_off_on_system_suspend_var,
+        )
+        cb_system_off.grid(row=7, column=1, sticky="w", padx=16, pady=(4, 0))
+        _Tooltip(cb_system_off, "勾选后：系统进入睡眠/休眠时自动关灯")
+
+        self._power_on_on_system_resume_var = tk.BooleanVar(
+            value=self._config.device.power_on_on_system_resume)
+        cb_system_on = ttk.Checkbutton(
+            frm, text="系统唤醒时开灯",
+            variable=self._power_on_on_system_resume_var,
+        )
+        cb_system_on.grid(row=8, column=0, sticky="w", padx=16, pady=(4, 0))
+        _Tooltip(cb_system_on, "勾选后：系统从睡眠/休眠唤醒时自动开灯")
+
         self._enable_miot_var = tk.BooleanVar(
             value=self._config.device.enable_miot_for_unknown)
         cb_miot = ttk.Checkbutton(
             frm, text="启用 MIoT（实验性）",
             variable=self._enable_miot_var,
         )
-        cb_miot.grid(row=7, column=0, columnspan=2, sticky="w", padx=16,
+        cb_miot.grid(row=8, column=1, sticky="w", padx=16,
                      pady=(4, 0))
         _Tooltip(cb_miot,
                  "对未列入 MIoT 白名单的新型 Yeelight 设备，\n"
@@ -223,7 +250,7 @@ class SetupWizard:
 
         # ── Hotkey Settings ───────────────────────────────────────────────────
         ttk.Separator(frm, orient="horizontal").grid(
-            row=8, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 8))
+            row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(16, 8))
 
         ttk.Label(
             frm,
@@ -323,6 +350,9 @@ class SetupWizard:
             enable_miot_for_unknown=self._enable_miot_var.get(),
             power_on_at_startup=self._power_on_at_startup_var.get(),
             power_off_at_exit=self._power_off_at_exit_var.get(),
+            power_off_on_monitor_sleep=self._power_off_on_monitor_sleep_var.get(),
+            power_off_on_system_suspend=self._power_off_on_system_suspend_var.get(),
+            power_on_on_system_resume=self._power_on_on_system_resume_var.get(),
         )
 
     def _on_test(self) -> None:

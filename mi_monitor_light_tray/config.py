@@ -39,6 +39,12 @@ class DeviceConfig:
     power_on_at_startup: bool = False
     # Power the light off when the tray app exits.
     power_off_at_exit: bool = False
+    # Power the light off when monitor goes to sleep, and restore when monitor wakes up.
+    power_off_on_monitor_sleep: bool = False
+    # Power the light off when system suspends (sleep/hibernate).
+    power_off_on_system_suspend: bool = False
+    # Power the light on when system resumes from sleep/hibernate.
+    power_on_on_system_resume: bool = False
 
     def is_complete(self) -> bool:
         return bool(self.ip) and bool(self.token) and len(self.token) == 32

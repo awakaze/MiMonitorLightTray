@@ -65,3 +65,4 @@ scripts/miot_specs/
 # Local-only MIoT scrape/distill scripts (user's working tooling, not shipped)
 scripts/fetch_miot_specs.py
 scripts/distill_miot_specs.py
+RELEASE_NOTES_v1.4.1.md

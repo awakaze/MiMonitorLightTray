@@ -73,6 +73,7 @@
 - **持久化配置** — 保存到 `%APPDATA%\MiMonitorLightTray\config.json`，原子写入
 - **免安装** — 提供单文件 EXE，无需 Python 环境
 - **灯跟随软件启动/关闭** — 可选；程序启动时自动开灯、退出时自动关灯（两个独立开关）
+- **灯随显示器休眠开关** — 显示器休眠时自动关灯，唤醒时自动恢复灯光状态
 - **拖滑杆自动开灯** — 灯处于关闭状态时拖动亮度/色温，会先开灯再生效，避免"白拖一通"
 - **MIoT 实验开关** — 对未被白名单收录的新型 Yeelight 设备，可在设置里手动启用 MIoT 协议尝试
 
@@ -138,6 +139,13 @@ print(f"连接成功: model={info.model} firmware={info.firmware_version}")
   - **调整亮度** — 打开控制窗
   - **桌面小部件** — 切换桌面小部件显示
   - **设置** — 重新配置设备
+  - **开机自启动** — 开关开机自启动
+  - **灯跟随软件启动** — 开关程序启动时自动开灯
+  - **灯跟随软件关闭** — 开关程序退出时自动关灯
+  - **灯随显示器休眠开关** — 开关显示器休眠时自动关灯
+  - **系统休眠时关灯** — 系统进入睡眠/休眠时自动关灯
+  - **系统唤醒时开灯** — 系统从睡眠/休眠唤醒时自动开灯
+  - **固定在桌面上** — 切换桌面小部件显示
   - **检查更新** — 手动检查 GitHub Release 新版本
   - **启动时自动检查更新** — 开关自动更新检测
   - **访问 GitHub 主页** — 在浏览器中打开项目主页
@@ -185,6 +193,24 @@ print(f"连接成功: model={info.model} firmware={info.firmware_version}")
 - **灯跟随软件关闭** — 程序退出（含点托盘菜单"退出"、`Ctrl+C`、任务栏关闭）时自动关灯
 
 两个开关相互独立，可以单独勾选。和"开机自启动"组合使用就能做到"开机 → 灯亮，关机 → 灯灭"。退出关灯走 `atexit` 钩子兜底，覆盖非托盘"退出"的退出路径。
+
+### 灯随显示器休眠开关
+
+设置窗口或托盘右键菜单都能勾选"灯随显示器休眠开关"：
+
+- **显示器休眠时** — 自动关闭灯光，节能省电
+- **显示器唤醒时** — 自动恢复到休眠前的灯光状态
+
+此功能使用用户空闲时间检测（空闲 55 秒触发）监听显示器状态变化，智能记忆休眠前的开关状态。特别适合离开电脑时让显示器和灯光同步休眠，回来时自动恢复。
+
+### 系统休眠时关灯 / 系统唤醒时开灯
+
+设置窗口或托盘右键菜单提供两个独立的开关：
+
+- **系统休眠时关灯** — 系统进入睡眠/休眠时自动关闭灯光
+- **系统唤醒时开灯** — 系统从睡眠/休眠唤醒时自动打开灯光
+
+两个开关相互独立，可以单独勾选。此功能监听 Windows 电源广播消息（WM_POWERBROADCAST），使用顶级窗口接收 PBT_APMSUSPEND / PBT_APMRESUMESUSPEND 事件。适合离开电脑让系统自动休眠的场景，回来时灯光自动恢复。
 
 ### 拖滑杆自动开灯
 
@@ -234,6 +260,7 @@ mi_monitor_light_tray/
   setup_wizard.py      IP/Token 配置向导，含「自动获取」按钮和测试连接
   tray.py              pystray 系统托盘控制器
   shutdown_listener.py Windows WM_QUERYENDSESSION 监听，关机时关灯
+  monitor_sleep_listener.py Windows WM_POWERBROADCAST 监听，显示器休眠时关灯
   single_instance.py   Windows 命名互斥锁（单例保护）
   discovery.py         UDP 广播设备发现，按 device_id 重定位
 scripts/
@@ -256,7 +283,10 @@ tests/                 pytest 单元测试套件
     "device_id": 12345678,
     "enable_miot_for_unknown": false,
     "power_on_at_startup": false,
-    "power_off_at_exit": false
+    "power_off_at_exit": false,
+    "power_off_on_monitor_sleep": false,
+    "power_off_on_system_suspend": false,
+    "power_on_on_system_resume": false
   },
   "widget": {
     "visible": false,
@@ -275,7 +305,7 @@ tests/                 pytest 单元测试套件
 }
 ```
 
-`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`model` 留空时程序会在启动时通过 `info()` 自动探测并回填，避免协议错配。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` 两个独立开关控制程序启停时是否自动开/关灯。`widget` 段记录桌面小部件的位置、锁定状态与可见性。`hotkey` 段存储全局快捷键配置和调整步进值。`auto_check_update` 控制是否在启动时自动检查 GitHub Release 更新。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
+`device_id` 在首次连接成功时自动捕获，用于 IP 变化后的自动发现。`model` 留空时程序会在启动时通过 `info()` 自动探测并回填，避免协议错配。`enable_miot_for_unknown` 让未在 `_MIOT_MAPPINGS` 白名单里的 Yeelight 设备也走 MIoT 协议（用 lamp22 的通用 Light service spec 探测），适合新机型；`power_on_at_startup` / `power_off_at_exit` / `power_off_on_monitor_sleep` / `power_off_on_system_suspend` / `power_on_on_system_resume` 五个独立开关分别控制程序启动时自动开灯、程序退出时自动关灯、显示器休眠时自动关灯、系统休眠时自动关灯、系统唤醒时自动开灯。`widget` 段记录桌面小部件的位置、锁定状态与可见性。`hotkey` 段存储全局快捷键配置和调整步进值。`auto_check_update` 控制是否在启动时自动检查 GitHub Release 更新。亮度/色温由挂灯自己记忆；开机自启动（Windows 系统层面的）状态由注册表保存，不在此文件里。
 
 ## 常见问题
 
