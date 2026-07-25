@@ -561,76 +561,75 @@ class App:
             log.warning("Failed to schedule update dialog: %s", exc)
 
     def _setup_hotkeys(self) -> None:
-        """Configure hotkeys based on current config."""
+        """Configure hotkeys for all devices."""
         try:
-            self._hotkey_manager.set_hotkeys(
-                brightness_up=self._config.hotkey.brightness_up,
-                brightness_down=self._config.hotkey.brightness_down,
-                color_temp_up=self._config.hotkey.color_temp_up,
-                color_temp_down=self._config.hotkey.color_temp_down,
-            )
-            log.info("Hotkeys configured")
+            # Collect all hotkey configurations from devices
+            hotkey_id = 1
+            callbacks = {}
+
+            for device_id, light in self._lights.items():
+                dev_config = self._find_device_config(device_id)
+                if not dev_config:
+                    continue
+
+                # Register brightness up
+                if dev_config.brightness_up:
+                    callbacks[hotkey_id] = lambda l=light, s=dev_config.hotkey_step: self._on_device_brightness_up(l, s)
+                    self._hotkey_manager.register_hotkey(hotkey_id, dev_config.brightness_up)
+                    hotkey_id += 1
+
+                # Register brightness down
+                if dev_config.brightness_down:
+                    callbacks[hotkey_id] = lambda l=light, s=dev_config.hotkey_step: self._on_device_brightness_down(l, s)
+                    self._hotkey_manager.register_hotkey(hotkey_id, dev_config.brightness_down)
+                    hotkey_id += 1
+
+                # Register color temp up
+                if dev_config.color_temp_up:
+                    callbacks[hotkey_id] = lambda l=light, s=dev_config.hotkey_step: self._on_device_color_temp_up(l, s)
+                    self._hotkey_manager.register_hotkey(hotkey_id, dev_config.color_temp_up)
+                    hotkey_id += 1
+
+                # Register color temp down
+                if dev_config.color_temp_down:
+                    callbacks[hotkey_id] = lambda l=light, s=dev_config.hotkey_step: self._on_device_color_temp_down(l, s)
+                    self._hotkey_manager.register_hotkey(hotkey_id, dev_config.color_temp_down)
+                    hotkey_id += 1
+
+            self._hotkey_manager.set_callbacks(callbacks)
+            self._hotkey_manager.start()
+            log.info("Hotkeys configured for %d devices", len(self._lights))
         except Exception as exc:
             log.warning("Failed to setup hotkeys: %s", exc)
 
-    def _on_hotkey_brightness_up(self) -> None:
-        """Hotkey callback: increase brightness."""
-        step = self._config.hotkey.step
-        for light in self._lights.values():
-            state = light.state
-            if not state.reachable:
-                continue
-            current = state.brightness or 50
-            new_value = min(100, current + step)
-            # Run in thread to avoid blocking
-            import threading
-            threading.Thread(target=lambda l=light, v=new_value: l.set_brightness(v), daemon=True).start()
-            log.debug("Hotkey: brightness %d -> %d", current, new_value)
+    def _on_device_brightness_up(self, light, step: int) -> None:
+        """Hotkey callback: increase brightness for specific device."""
+        threading.Thread(
+            target=lambda: light.adjust_brightness(step),
+            daemon=True
+        ).start()
 
-    def _on_hotkey_brightness_down(self) -> None:
-        """Hotkey callback: decrease brightness."""
-        step = self._config.hotkey.step
-        for light in self._lights.values():
-            state = light.state
-            if not state.reachable:
-                continue
-            current = state.brightness or 50
-            new_value = max(1, current - step)
-            import threading
-            threading.Thread(target=lambda l=light, v=new_value: l.set_brightness(v), daemon=True).start()
-            log.debug("Hotkey: brightness %d -> %d", current, new_value)
+    def _on_device_brightness_down(self, light, step: int) -> None:
+        """Hotkey callback: decrease brightness for specific device."""
+        threading.Thread(
+            target=lambda: light.adjust_brightness(-step),
+            daemon=True
+        ).start()
 
-    def _on_hotkey_color_temp_up(self) -> None:
-        """Hotkey callback: increase color temperature (cooler)."""
-        step = self._config.hotkey.step
-        for light in self._lights.values():
-            state = light.state
-            if not state.reachable:
-                continue
-            current = state.color_temp or 4000
-            # Scale step based on color temp range
-            ct_range = light.color_temp_max - light.color_temp_min
-            actual_step = int(ct_range * step / 100)  # step as percentage
-            new_value = min(light.color_temp_max, current + actual_step)
-            import threading
-            threading.Thread(target=lambda l=light, v=new_value: l.set_color_temp(v), daemon=True).start()
-            log.debug("Hotkey: color temp %d -> %d", current, new_value)
+    def _on_device_color_temp_up(self, light, step: int) -> None:
+        """Hotkey callback: increase color temp for specific device."""
+        threading.Thread(
+            target=lambda: light.adjust_color_temp(step),
+            daemon=True
+        ).start()
 
-    def _on_hotkey_color_temp_down(self) -> None:
-        """Hotkey callback: decrease color temperature (warmer)."""
-        step = self._config.hotkey.step
-        for light in self._lights.values():
-            state = light.state
-            if not state.reachable:
-                continue
-            current = state.color_temp or 4000
-            # Scale step based on color temp range
-            ct_range = light.color_temp_max - light.color_temp_min
-            actual_step = int(ct_range * step / 100)  # step as percentage
-            new_value = max(light.color_temp_min, current - actual_step)
-            import threading
-            threading.Thread(target=lambda l=light, v=new_value: l.set_color_temp(v), daemon=True).start()
-            log.debug("Hotkey: color temp %d -> %d", current, new_value)
+    def _on_device_color_temp_down(self, light, step: int) -> None:
+        """Hotkey callback: decrease color temp for specific device."""
+        threading.Thread(
+            target=lambda: light.adjust_color_temp(-step),
+            daemon=True
+        ).start()
+
 
 
 def _run_setup_only(config: AppConfig) -> int:

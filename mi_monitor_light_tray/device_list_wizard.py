@@ -196,9 +196,22 @@ class DeviceListWizard:
             self._build_device_card(device, idx)
 
     def _build_device_card(self, device: DeviceConfig, index: int) -> None:
-        """Build a card for one device."""
-        card = ttk.Frame(self._device_list_frame, relief="flat")
+        """Build a card for one device with drag-and-drop support."""
+        card = ttk.Frame(self._device_list_frame, relief="solid", borderwidth=1)
         card.pack(fill="x", padx=8, pady=4)
+
+        # Store index for drag-and-drop
+        card._device_index = index
+
+        # Drag handle (left side)
+        drag_handle = ttk.Label(
+            card,
+            text="⋮⋮",
+            font=("Microsoft YaHei UI", 14),
+            foreground="#8a8a8a",
+            cursor="hand2"
+        )
+        drag_handle.pack(side="left", padx=(8, 4))
 
         # Device info
         info_frame = ttk.Frame(card)
@@ -232,6 +245,25 @@ class DeviceListWizard:
         # Action buttons
         btn_frame = ttk.Frame(card)
         btn_frame.pack(side="right", padx=8)
+
+        # Up/Down buttons for reordering
+        if index > 0:
+            ttk.Button(
+                btn_frame,
+                text="↑",
+                command=lambda: self._move_device_up(index),
+                style="Small.TButton",
+                width=3
+            ).pack(side="left", padx=2)
+
+        if index < len(self._config.devices) - 1:
+            ttk.Button(
+                btn_frame,
+                text="↓",
+                command=lambda: self._move_device_down(index),
+                style="Small.TButton",
+                width=3
+            ).pack(side="left", padx=2)
 
         ttk.Button(
             btn_frame,
@@ -315,6 +347,20 @@ class DeviceListWizard:
             del self._config.devices[index]
             self._refresh_device_list()
             log.info("Deleted device %s", device.name)
+
+    def _move_device_up(self, index: int) -> None:
+        """Move device up in the list."""
+        if index > 0:
+            self._config.devices[index], self._config.devices[index - 1] = \
+                self._config.devices[index - 1], self._config.devices[index]
+            self._refresh_device_list()
+
+    def _move_device_down(self, index: int) -> None:
+        """Move device down in the list."""
+        if index < len(self._config.devices) - 1:
+            self._config.devices[index], self._config.devices[index + 1] = \
+                self._config.devices[index + 1], self._config.devices[index]
+            self._refresh_device_list()
 
     def _open_cloud_login(self) -> None:
         """Open cloud login for device import (multi-select mode)."""

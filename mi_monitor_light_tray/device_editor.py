@@ -206,17 +206,52 @@ class DeviceEditorDialog:
                  "对未列入 MIoT 白名单的新型 Yeelight 设备，\n"
                  "尝试用通用 Light service spec 走 MIoT 协议。")
 
+        # Hotkey Settings
+        ttk.Label(
+            frm,
+            text="快捷键设置（仅控制此设备）",
+            font=("Microsoft YaHei UI", 11, "bold"),
+            foreground="#1a1a1a",
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(16, 8))
+
+        self._brightness_up_var = tk.StringVar(value=self._device.brightness_up or "")
+        self._brightness_down_var = tk.StringVar(value=self._device.brightness_down or "")
+        self._color_temp_up_var = tk.StringVar(value=self._device.color_temp_up or "")
+        self._color_temp_down_var = tk.StringVar(value=self._device.color_temp_down or "")
+        self._hotkey_step_var = tk.IntVar(value=self._device.hotkey_step or 5)
+
+        hotkey_fields = [
+            ("亮度增加", self._brightness_up_var, "如: ctrl+alt+up"),
+            ("亮度降低", self._brightness_down_var, "如: ctrl+alt+down"),
+            ("色温增加", self._color_temp_up_var, "如: ctrl+alt+right"),
+            ("色温降低", self._color_temp_down_var, "如: ctrl+alt+left"),
+        ]
+
+        for i, (label, var, tip) in enumerate(hotkey_fields, start=11):
+            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", **pad)
+            e = ttk.Entry(frm, textvariable=var, width=30,
+                          font=("Microsoft YaHei UI", 9))
+            e.grid(row=i, column=1, sticky="ew", **pad)
+            _Tooltip(e, tip)
+
+        ttk.Label(frm, text="调整步进").grid(row=15, column=0, sticky="w", **pad)
+        step_frame = ttk.Frame(frm)
+        step_frame.grid(row=15, column=1, sticky="w", **pad)
+        ttk.Spinbox(step_frame, from_=1, to=20, textvariable=self._hotkey_step_var,
+                    width=10).pack(side="left")
+        ttk.Label(step_frame, text="  (亮度: 1-100, 色温按比例)").pack(side="left")
+
         frm.columnconfigure(1, weight=1)
 
         # Status + buttons
         self._status_var = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self._status_var,
                   foreground="#0066cc"
-                  ).grid(row=10, column=0, columnspan=2,
+                  ).grid(row=16, column=0, columnspan=2,
                          sticky="w", padx=16, pady=(8, 0))
 
         btn_row = ttk.Frame(frm)
-        btn_row.grid(row=11, column=0, columnspan=2,
+        btn_row.grid(row=17, column=0, columnspan=2,
                      sticky="e", pady=(12, 4), padx=16)
 
         ttk.Button(btn_row, text="取消",
@@ -251,6 +286,11 @@ class DeviceEditorDialog:
             power_off_on_monitor_sleep=self._power_off_on_monitor_sleep_var.get(),
             power_off_on_system_suspend=self._power_off_on_system_suspend_var.get(),
             power_on_on_system_resume=self._power_on_on_system_resume_var.get(),
+            brightness_up=self._brightness_up_var.get().strip(),
+            brightness_down=self._brightness_down_var.get().strip(),
+            color_temp_up=self._color_temp_up_var.get().strip(),
+            color_temp_down=self._color_temp_down_var.get().strip(),
+            hotkey_step=self._hotkey_step_var.get(),
         )
 
     def _on_test(self) -> None:
@@ -290,8 +330,9 @@ class DeviceEditorDialog:
                                  "请填写设备 IP 地址和 32 位 Token",
                                  parent=self._dialog)
             return
-        self._on_saved(dev)
         self._close()
+        # Call callback after dialog closes
+        self._on_saved(dev)
 
     def _close(self) -> None:
         try:
