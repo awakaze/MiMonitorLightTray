@@ -221,10 +221,10 @@ class DeviceEditorDialog:
         self._hotkey_step_var = tk.IntVar(value=self._device.hotkey_step or 5)
 
         hotkey_fields = [
-            ("亮度增加", self._brightness_up_var, "如: ctrl+alt+up"),
-            ("亮度降低", self._brightness_down_var, "如: ctrl+alt+down"),
-            ("色温增加", self._color_temp_up_var, "如: ctrl+alt+right"),
-            ("色温降低", self._color_temp_down_var, "如: ctrl+alt+left"),
+            ("亮度增加", self._brightness_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Up"),
+            ("亮度降低", self._brightness_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Down"),
+            ("色温增加", self._color_temp_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Right"),
+            ("色温降低", self._color_temp_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Left"),
         ]
 
         for i, (label, var, tip) in enumerate(hotkey_fields, start=11):
@@ -233,6 +233,10 @@ class DeviceEditorDialog:
                           font=("Microsoft YaHei UI", 9))
             e.grid(row=i, column=1, sticky="ew", **pad)
             _Tooltip(e, tip)
+            # Bind key capture events
+            e.bind("<FocusIn>", lambda evt, entry=e: self._start_hotkey_capture(entry))
+            e.bind("<KeyPress>", lambda evt, entry=e, v=var: self._capture_hotkey(evt, entry, v))
+            e.bind("<FocusOut>", lambda evt, entry=e: self._end_hotkey_capture(entry))
 
         ttk.Label(frm, text="调整步进").grid(row=15, column=0, sticky="w", **pad)
         step_frame = ttk.Frame(frm)
@@ -339,3 +343,55 @@ class DeviceEditorDialog:
             self._dialog.destroy()
         except tk.TclError:
             pass
+
+    # ── Hotkey capture ────────────────────────────────────────────────────
+    def _start_hotkey_capture(self, entry: ttk.Entry) -> None:
+        """Start capturing hotkey — select all text so next input replaces it."""
+        entry.select_range(0, tk.END)
+
+    def _end_hotkey_capture(self, entry: ttk.Entry) -> None:
+        """End hotkey capture — clear selection."""
+        try:
+            entry.select_clear()
+        except tk.TclError:
+            pass
+
+    def _capture_hotkey(self, event: tk.Event, entry: ttk.Entry,
+                        var: tk.StringVar) -> str:
+        """Capture a hotkey combination from a keyboard event."""
+        state = event.state
+
+        mods = []
+        if state & 0x0004:
+            mods.append("Ctrl")
+        if state & 0x0001:
+            mods.append("Shift")
+        if state & 0x20000:
+            mods.append("Alt")
+        elif (state & 0x0008) and event.keysym in ("Alt_L", "Alt_R"):
+            mods.append("Alt")
+        if state & 0x0040:
+            mods.append("Win")
+
+        key = event.keysym
+
+        # Only modifier pressed — show partial combo and wait
+        if key in ("Control_L", "Control_R", "Shift_L", "Shift_R",
+                   "Alt_L", "Alt_R", "Win_L", "Win_R",
+                   "Super_L", "Super_R"):
+            if mods:
+                var.set("+".join(mods) + "+")
+            return "break"
+
+        key_map = {
+            "Up": "Up", "Down": "Down", "Left": "Left", "Right": "Right",
+            "Return": "Enter", "BackSpace": "Backspace", "Escape": "Esc",
+            "space": "Space", "Tab": "Tab", "Delete": "Delete",
+            "Home": "Home", "End": "End",
+            "Prior": "PageUp", "Next": "PageDown",
+        }
+        key = key_map.get(key, key)
+
+        hotkey = "+".join(mods) + "+" + key if mods else key
+        var.set(hotkey)
+        return "break"
