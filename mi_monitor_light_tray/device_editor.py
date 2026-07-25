@@ -221,10 +221,10 @@ class DeviceEditorDialog:
         self._hotkey_step_var = tk.IntVar(value=self._device.hotkey_step or 5)
 
         hotkey_fields = [
-            ("亮度增加", self._brightness_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Up"),
-            ("亮度降低", self._brightness_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Down"),
-            ("色温增加", self._color_temp_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Right"),
-            ("色温降低", self._color_temp_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Left"),
+            ("亮度增加", self._brightness_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Up\n右键点击可清空"),
+            ("亮度降低", self._brightness_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Down\n右键点击可清空"),
+            ("色温增加", self._color_temp_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Right\n右键点击可清空"),
+            ("色温降低", self._color_temp_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Left\n右键点击可清空"),
         ]
 
         for i, (label, var, tip) in enumerate(hotkey_fields, start=11):
@@ -237,6 +237,8 @@ class DeviceEditorDialog:
             e.bind("<FocusIn>", lambda evt, entry=e: self._start_hotkey_capture(entry))
             e.bind("<KeyPress>", lambda evt, entry=e, v=var: self._capture_hotkey(evt, entry, v))
             e.bind("<FocusOut>", lambda evt, entry=e: self._end_hotkey_capture(entry))
+            # Right-click clears the hotkey
+            e.bind("<Button-3>", lambda evt, v=var: v.set(""))
 
         ttk.Label(frm, text="调整步进").grid(row=15, column=0, sticky="w", **pad)
         step_frame = ttk.Frame(frm)
