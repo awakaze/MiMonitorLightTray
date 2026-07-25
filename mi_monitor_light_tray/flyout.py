@@ -9,6 +9,7 @@ from tkinter import ttk
 from typing import Callable, Optional
 
 from .miio_client import Debouncer, LightState, MiMonitorLight
+from .config import AppConfig
 
 log = logging.getLogger(__name__)
 
@@ -151,10 +152,13 @@ class FlyoutWindow:
     MUTED    = "#8a8a8a"
     ACCENT   = "#60cdff"
 
-    def __init__(self, light: MiMonitorLight,
+    def __init__(self, lights: dict[str, MiMonitorLight],
+                 config: AppConfig,
                  on_open_setup: Callable[[], None]) -> None:
-        self._light         = light
+        self._lights        = lights
+        self._config        = config
         self._on_open_setup = on_open_setup
+        self._active_id     = config.active_device_id  # "ALL" or specific device id
 
         self._root = tk.Tk()
         self._root.withdraw()
@@ -193,8 +197,30 @@ class FlyoutWindow:
         outer = tk.Frame(self._root, bg=self.BG)
         outer.pack(fill="x", padx=self.PAD_X, pady=(self.PAD_Y, 0))
 
+        # Device selector (only show if multiple devices or "ALL" mode makes sense)
+        if len(self._lights) > 1:
+            selector_frame = tk.Frame(outer, bg=self.BG)
+            selector_frame.pack(fill="x", pady=(0, 8))
+
+            tk.Label(selector_frame, text="设备", fg=self.MUTED, bg=self.BG,
+                     font=("Microsoft YaHei UI", 9),
+                     anchor="w").pack(side="left", padx=(0, 8))
+
+            self._device_var = tk.StringVar(value=self._format_device_option(self._active_id))
+            device_combo = ttk.Combobox(
+                selector_frame, textvariable=self._device_var,
+                state="readonly", width=25,
+                font=("Microsoft YaHei UI", 9)
+            )
+            device_combo['values'] = self._build_device_options()
+            device_combo.bind("<<ComboboxSelected>>", self._on_device_changed)
+            device_combo.pack(side="left", fill="x", expand=True)
+
         self._brightness_var = tk.IntVar(value=50)
         self._color_temp_var = tk.IntVar(value=4000)
+
+        # Get initial color temp range from first reachable device
+        ct_min, ct_max = self._get_ct_range()
 
         self._build_row(outer, "", "亮度",
                         self._brightness_var,
@@ -204,8 +230,7 @@ class FlyoutWindow:
 
         self._build_row(outer, "", "色温",
                         self._color_temp_var,
-                        self._light.color_temp_min,
-                        self._light.color_temp_max,
+                        ct_min, ct_max,
                         "K", self._on_color_temp)
 
         # ── Footer ───────────────────────────────────────────────────────────
@@ -268,6 +293,66 @@ class FlyoutWindow:
         btn.bind("<Button-1>", lambda _: cmd())
         btn.bind("<Enter>",    lambda _: btn.configure(fg=self.TEXT))
         btn.bind("<Leave>",    lambda _: btn.configure(fg=self.MUTED))
+
+    # ── device selector helpers ───────────────────────────────────────────────
+
+    def _build_device_options(self) -> list[str]:
+        """Build dropdown options: ['所有设备', 'Device 1', 'Device 2', ...]"""
+        options = ["所有设备"]
+        for dev_id in self._lights.keys():
+            dev_config = self._find_device_config(dev_id)
+            name = dev_config.name if dev_config else f"设备 {dev_id[:8]}"
+            options.append(name)
+        return options
+
+    def _format_device_option(self, device_id: str) -> str:
+        """Convert device_id to display name for dropdown."""
+        if device_id == "ALL":
+            return "所有设备"
+        dev_config = self._find_device_config(device_id)
+        return dev_config.name if dev_config else f"设备 {device_id[:8]}"
+
+    def _find_device_config(self, device_id: str):
+        """Find DeviceConfig by id."""
+        return next((d for d in self._config.devices if d.id == device_id), None)
+
+    def _on_device_changed(self, event) -> None:
+        """Handle device selection change."""
+        selected = self._device_var.get()
+        if selected == "所有设备":
+            self._active_id = "ALL"
+        else:
+            # Find device id by name
+            for dev_config in self._config.devices:
+                if dev_config.name == selected:
+                    self._active_id = dev_config.id
+                    break
+
+        # Save active device to config
+        self._config.active_device_id = self._active_id
+        self._config.save()
+
+        # Refresh state for selected device
+        threading.Thread(target=self._bg_refresh, daemon=True).start()
+
+    def _get_active_light(self) -> Optional[MiMonitorLight]:
+        """Get the currently selected light (first reachable if ALL mode)."""
+        if self._active_id == "ALL":
+            # Return first reachable device
+            for light in self._lights.values():
+                if light.state.reachable:
+                    return light
+            # All offline, return first device
+            return next(iter(self._lights.values()), None)
+        else:
+            return self._lights.get(self._active_id)
+
+    def _get_ct_range(self) -> tuple[int, int]:
+        """Get color temp range from active device."""
+        light = self._get_active_light()
+        if light:
+            return light.color_temp_min, light.color_temp_max
+        return 2700, 6500  # Default range
 
     # ── thread-safe entry points ──────────────────────────────────────────────
 
@@ -358,30 +443,58 @@ class FlyoutWindow:
     # ── callbacks ────────────────────────────────────────────────────────────
 
     def _bg_refresh(self) -> None:
-        state = self._light.refresh()
-        self._root.after(0, lambda: self._apply_state(state))
+        light = self._get_active_light()
+        if light:
+            state = light.refresh()
+            self._root.after(0, lambda: self._apply_state(state))
 
     def _on_brightness(self, v: str) -> None:
         if self._suppress:
             return
-        self._brightness_debounce.call(
-            self._light.set_brightness, int(float(v)))
+        val = int(float(v))
+        if self._active_id == "ALL":
+            # Broadcast to all reachable devices
+            for light in self._lights.values():
+                if light.state.reachable:
+                    self._brightness_debounce.call(light.set_brightness, val)
+        else:
+            light = self._lights.get(self._active_id)
+            if light:
+                self._brightness_debounce.call(light.set_brightness, val)
 
     def _on_color_temp(self, v: str) -> None:
         if self._suppress:
             return
-        self._color_temp_debounce.call(
-            self._light.set_color_temp, int(float(v)))
+        val = int(float(v))
+        if self._active_id == "ALL":
+            # Broadcast to all reachable devices
+            for light in self._lights.values():
+                if light.state.reachable:
+                    self._color_temp_debounce.call(light.set_color_temp, val)
+        else:
+            light = self._lights.get(self._active_id)
+            if light:
+                self._color_temp_debounce.call(light.set_color_temp, val)
 
     def _on_toggle_power(self) -> None:
         threading.Thread(target=self._toggle_thread, daemon=True).start()
 
     def _toggle_thread(self) -> None:
-        new = self._light.toggle()
-        st  = self._light.state
-        self._root.after(0, lambda: self._status_var.set(
-            "已开灯" if new else "已关灯"
-            if st.reachable else f"离线 — {(st.error or '')[:40]}"))
+        if self._active_id == "ALL":
+            # Broadcast to all devices
+            for light in self._lights.values():
+                light.toggle()
+            # Show aggregate status
+            any_on = any(l.state.is_on for l in self._lights.values() if l.state.reachable)
+            self._root.after(0, lambda: self._status_var.set("已开灯" if any_on else "已关灯"))
+        else:
+            light = self._lights.get(self._active_id)
+            if light:
+                new = light.toggle()
+                st = light.state
+                self._root.after(0, lambda: self._status_var.set(
+                    "已开灯" if new else "已关灯"
+                    if st.reachable else f"离线 — {(st.error or '')[:40]}"))
 
     def _open_settings(self) -> None:
         self.hide()
