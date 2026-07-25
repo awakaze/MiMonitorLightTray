@@ -22,17 +22,20 @@ class CloudLoginWindow:
         parent: tk.Tk,
         on_success: Callable[[XiaomiDeviceInfo], None],
         on_cancel: Optional[Callable[[], None]] = None,
+        multi_select: bool = False,
     ) -> None:
         """初始化云端登录窗口。
 
         Args:
             parent: 父窗口
-            on_success: 设备选择成功回调
+            on_success: 设备选择成功回调（单选模式：单个设备，多选模式：列表）
             on_cancel: 取消回调
+            multi_select: 是否启用多选模式
         """
         self._parent = parent
         self._on_success = on_success
         self._on_cancel = on_cancel
+        self._multi_select = multi_select
         self._is_closing = False
         self._current_thread: Optional[threading.Thread] = None
         self._auth: Optional[QrCodeAuth] = None
@@ -213,16 +216,21 @@ class CloudLoginWindow:
             ).pack()
             return
 
+        title_text = "请选择设备（可多选）" if self._multi_select else "请选择设备"
         ttk.Label(
             self._content_frame,
-            text="请选择设备",
+            text=title_text,
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(pady=(0, 12))
 
         # 设备网格（2列）
         self._devices = devices
-        self._selected_index = None
+        if self._multi_select:
+            self._selected_indices: set[int] = set()  # Multi-select mode
+        else:
+            self._selected_index = None  # Single-select mode
         self._device_buttons: List[tk.Frame] = []
+        self._device_checkboxes: List[tk.Checkbutton] = []  # For multi-select
 
         # 可滚动的设备网格
         canvas = tk.Canvas(self._content_frame, bg="#f3f3f3", highlightthickness=0)
@@ -258,6 +266,18 @@ class CloudLoginWindow:
             )
             card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
 
+            if self._multi_select:
+                # Multi-select mode: add checkbox
+                checkbox_var = tk.BooleanVar(value=False)
+                checkbox = tk.Checkbutton(
+                    card,
+                    variable=checkbox_var,
+                    bg="#ffffff",
+                    command=lambda idx=i, var=checkbox_var: self._toggle_device(idx, var.get())
+                )
+                checkbox.pack(anchor="w")
+                self._device_checkboxes.append(checkbox)
+
             # 设备名称
             name_label = tk.Label(
                 card,
@@ -280,13 +300,14 @@ class CloudLoginWindow:
             )
             model_label.pack(fill="x")
 
-            # 绑定点击事件
-            def _on_click(event, idx=i):
-                self._select_device(idx)
+            if not self._multi_select:
+                # Single-select mode: bind click events
+                def _on_click(event, idx=i):
+                    self._select_device(idx)
 
-            card.bind("<Button-1>", _on_click)
-            name_label.bind("<Button-1>", _on_click)
-            model_label.bind("<Button-1>", _on_click)
+                card.bind("<Button-1>", _on_click)
+                name_label.bind("<Button-1>", _on_click)
+                model_label.bind("<Button-1>", _on_click)
 
             self._device_buttons.append(card)
 
@@ -294,24 +315,34 @@ class CloudLoginWindow:
             grid_frame.columnconfigure(0, weight=1)
             grid_frame.columnconfigure(1, weight=1)
 
-        # 默认选中第一个
-        if devices:
+        # 默认选中第一个（仅单选模式）
+        if devices and not self._multi_select:
             self._select_device(0)
 
         # 按钮
         btn_frame = ttk.Frame(self._content_frame)
         btn_frame.pack(pady=(0, 0))
 
+        if self._multi_select:
+            # Multi-select: add select all/clear buttons
+            ttk.Button(
+                btn_frame, text="全选", command=self._select_all
+            ).pack(side="left", padx=4)
+            ttk.Button(
+                btn_frame, text="清空", command=self._clear_selection
+            ).pack(side="left", padx=4)
+
         ttk.Button(
             btn_frame, text="取消", command=self._close
         ).pack(side="left", padx=4)
 
+        confirm_text = "确认选择" if self._multi_select else "确认选择"
         ttk.Button(
-            btn_frame, text="确认选择", command=self._on_device_selected
+            btn_frame, text=confirm_text, command=self._on_device_selected
         ).pack(side="left", padx=4)
 
     def _select_device(self, index: int) -> None:
-        """选择设备。"""
+        """选择设备（单选模式）。"""
         # 取消之前的选中状态
         if self._selected_index is not None:
             prev_card = self._device_buttons[self._selected_index]
@@ -326,11 +357,42 @@ class CloudLoginWindow:
         for widget in card.winfo_children():
             widget.configure(bg="#e6f3ff")
 
+    def _toggle_device(self, index: int, selected: bool) -> None:
+        """切换设备选中状态（多选模式）。"""
+        if selected:
+            self._selected_indices.add(index)
+        else:
+            self._selected_indices.discard(index)
+
+    def _select_all(self) -> None:
+        """全选所有设备（多选模式）。"""
+        for i, checkbox in enumerate(self._device_checkboxes):
+            checkbox.select()
+            self._selected_indices.add(i)
+
+    def _clear_selection(self) -> None:
+        """清空所有选择（多选模式）。"""
+        for checkbox in self._device_checkboxes:
+            checkbox.deselect()
+        self._selected_indices.clear()
+
     def _on_device_selected(self) -> None:
         """设备选择确认按钮点击事件。"""
-        if self._selected_index is None:
-            messagebox.showwarning("未选择", "请选择一个设备", parent=self._root)
-            return
+        if self._multi_select:
+            # Multi-select mode
+            if not self._selected_indices:
+                messagebox.showwarning("未选择", "请至少选择一个设备", parent=self._root)
+                return
+            selected_devices = [self._devices[i] for i in sorted(self._selected_indices)]
+            self._close()
+            # Call on_success with list of devices
+            for device in selected_devices:
+                self._on_success(device)
+        else:
+            # Single-select mode
+            if self._selected_index is None:
+                messagebox.showwarning("未选择", "请选择一个设备", parent=self._root)
+                return
 
         device = self._devices[self._selected_index]
         self._on_success(device)

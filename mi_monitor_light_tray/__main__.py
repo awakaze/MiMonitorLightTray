@@ -464,9 +464,9 @@ class App:
         self._flyout._root.after(0, self._show_settings)
 
     def _show_settings(self) -> None:
-        from .setup_wizard import SetupWizard
+        from .device_list_wizard import DeviceListWizard
 
-        SetupWizard(
+        DeviceListWizard(
             self._config,
             on_saved=self._on_config_saved,
             parent=self._flyout._root,
