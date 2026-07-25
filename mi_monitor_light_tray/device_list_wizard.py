@@ -147,23 +147,6 @@ class DeviceListWizard:
                         variable=self._autostart_var,
                         command=_toggle_autostart).pack(anchor="w", pady=(0, 12))
 
-        # ── Hotkey Settings (Collapsed) ────────────────────────────────────
-        hotkey_frame = ttk.Frame(main_container)
-        hotkey_frame.pack(fill="x", pady=(0, 12))
-
-        self._hotkey_expanded = tk.BooleanVar(value=False)
-        hotkey_toggle = ttk.Checkbutton(
-            hotkey_frame,
-            text="▶ 快捷键设置",
-            variable=self._hotkey_expanded,
-            command=self._toggle_hotkey_section,
-            style="TCheckbutton"
-        )
-        hotkey_toggle.pack(anchor="w")
-
-        self._hotkey_detail_frame = ttk.Frame(main_container)
-        # Will be packed when expanded
-
         # ── Footer Buttons ─────────────────────────────────────────────────
         btn_row = ttk.Frame(main_container)
         btn_row.pack(fill="x", pady=(12, 0))
@@ -197,73 +180,93 @@ class DeviceListWizard:
 
     def _build_device_card(self, device: DeviceConfig, index: int) -> None:
         """Build a card for one device with drag-and-drop support."""
-        card = ttk.Frame(self._device_list_frame, relief="solid", borderwidth=1)
+        card = tk.Frame(self._device_list_frame, relief="solid", borderwidth=1,
+                        bg="#ffffff")
         card.pack(fill="x", padx=8, pady=4)
 
         # Store index for drag-and-drop
         card._device_index = index
 
+        # Bind drag events on the card
+        card.bind("<ButtonPress-1>", lambda e, i=index: self._on_drag_start(e, i))
+        card.bind("<B1-Motion>", self._on_drag_motion)
+        card.bind("<ButtonRelease-1>", self._on_drag_end)
+
         # Drag handle (left side)
-        drag_handle = ttk.Label(
+        drag_handle = tk.Label(
             card,
             text="⋮⋮",
             font=("Microsoft YaHei UI", 14),
             foreground="#8a8a8a",
-            cursor="hand2"
+            bg="#ffffff",
+            cursor="fleur"
         )
         drag_handle.pack(side="left", padx=(8, 4))
+        drag_handle.bind("<ButtonPress-1>", lambda e, i=index: self._on_drag_start(e, i))
+        drag_handle.bind("<B1-Motion>", self._on_drag_motion)
+        drag_handle.bind("<ButtonRelease-1>", self._on_drag_end)
 
         # Device info
-        info_frame = ttk.Frame(card)
+        info_frame = tk.Frame(card, bg="#ffffff")
         info_frame.pack(side="left", fill="both", expand=True, padx=8, pady=8)
 
-        name_label = ttk.Label(
+        name_label = tk.Label(
             info_frame,
             text=device.name or "未命名设备",
             font=("Microsoft YaHei UI", 10, "bold"),
-            foreground="#1a1a1a"
+            foreground="#1a1a1a",
+            bg="#ffffff"
         )
         name_label.pack(anchor="w")
 
-        ip_label = ttk.Label(
+        ip_label = tk.Label(
             info_frame,
             text=f"IP: {device.ip}  |  Token: {'●' * 8}",
             font=("Microsoft YaHei UI", 9),
-            foreground="#666666"
+            foreground="#666666",
+            bg="#ffffff"
         )
         ip_label.pack(anchor="w")
 
         if device.model:
-            model_label = ttk.Label(
+            model_label = tk.Label(
                 info_frame,
                 text=f"型号: {device.model}",
                 font=("Microsoft YaHei UI", 9),
-                foreground="#666666"
+                foreground="#666666",
+                bg="#ffffff"
             )
             model_label.pack(anchor="w")
 
+        # Display option checkboxes
+        display_frame = tk.Frame(info_frame, bg="#ffffff")
+        display_frame.pack(anchor="w", pady=(4, 0))
+
+        show_brightness_var = tk.BooleanVar(value=device.show_brightness)
+        cb_brightness = tk.Checkbutton(
+            display_frame,
+            text="显示亮度调节",
+            variable=show_brightness_var,
+            bg="#ffffff",
+            font=("Microsoft YaHei UI", 9),
+            command=lambda i=index, v=show_brightness_var: self._on_toggle_show_brightness(i, v),
+        )
+        cb_brightness.pack(side="left", padx=(0, 12))
+
+        show_color_temp_var = tk.BooleanVar(value=device.show_color_temp)
+        cb_color_temp = tk.Checkbutton(
+            display_frame,
+            text="显示色温调节",
+            variable=show_color_temp_var,
+            bg="#ffffff",
+            font=("Microsoft YaHei UI", 9),
+            command=lambda i=index, v=show_color_temp_var: self._on_toggle_show_color_temp(i, v),
+        )
+        cb_color_temp.pack(side="left")
+
         # Action buttons
-        btn_frame = ttk.Frame(card)
+        btn_frame = tk.Frame(card, bg="#ffffff")
         btn_frame.pack(side="right", padx=8)
-
-        # Up/Down buttons for reordering
-        if index > 0:
-            ttk.Button(
-                btn_frame,
-                text="↑",
-                command=lambda: self._move_device_up(index),
-                style="Small.TButton",
-                width=3
-            ).pack(side="left", padx=2)
-
-        if index < len(self._config.devices) - 1:
-            ttk.Button(
-                btn_frame,
-                text="↓",
-                command=lambda: self._move_device_down(index),
-                style="Small.TButton",
-                width=3
-            ).pack(side="left", padx=2)
 
         ttk.Button(
             btn_frame,
@@ -282,30 +285,6 @@ class DeviceListWizard:
         # Separator
         ttk.Separator(self._device_list_frame, orient="horizontal").pack(
             fill="x", padx=8, pady=2)
-
-    def _toggle_hotkey_section(self) -> None:
-        """Toggle hotkey settings expansion."""
-        if self._hotkey_expanded.get():
-            # Expand - show hotkey settings
-            self._hotkey_detail_frame.pack(fill="x", pady=(8, 0))
-            self._build_hotkey_settings()
-        else:
-            # Collapse
-            self._hotkey_detail_frame.pack_forget()
-
-    def _build_hotkey_settings(self) -> None:
-        """Build hotkey configuration UI."""
-        # Clear existing
-        for widget in self._hotkey_detail_frame.winfo_children():
-            widget.destroy()
-
-        # Implementation similar to setup_wizard.py hotkey section
-        # For brevity, keeping it simple
-        ttk.Label(
-            self._hotkey_detail_frame,
-            text="快捷键配置（待实现）",
-            foreground="#8a8a8a"
-        ).pack(pady=8)
 
     def _on_add_device(self) -> None:
         """Add a new device."""
@@ -348,19 +327,108 @@ class DeviceListWizard:
             self._refresh_device_list()
             log.info("Deleted device %s", device.name)
 
-    def _move_device_up(self, index: int) -> None:
-        """Move device up in the list."""
-        if index > 0:
-            self._config.devices[index], self._config.devices[index - 1] = \
-                self._config.devices[index - 1], self._config.devices[index]
-            self._refresh_device_list()
+    def _on_toggle_show_brightness(self, index: int, var: tk.BooleanVar) -> None:
+        """Toggle brightness visibility for a device."""
+        if 0 <= index < len(self._config.devices):
+            self._config.devices[index].show_brightness = var.get()
 
-    def _move_device_down(self, index: int) -> None:
-        """Move device down in the list."""
-        if index < len(self._config.devices) - 1:
-            self._config.devices[index], self._config.devices[index + 1] = \
-                self._config.devices[index + 1], self._config.devices[index]
+    def _on_toggle_show_color_temp(self, index: int, var: tk.BooleanVar) -> None:
+        """Toggle color temp visibility for a device."""
+        if 0 <= index < len(self._config.devices):
+            self._config.devices[index].show_color_temp = var.get()
+
+    # ── Drag-and-drop implementation ─────────────────────────────────────
+    def _on_drag_start(self, event, index: int) -> None:
+        """Start dragging a device card."""
+        self._drag_source_index = index
+        self._drag_start_y = event.y_root
+
+    def _on_drag_motion(self, event) -> None:
+        """Handle drag motion - determine target position."""
+        if not hasattr(self, "_drag_source_index"):
+            return
+
+        # Find which card the cursor is currently over
+        target_index = self._find_card_at_y(event.y_root)
+        if target_index is None or target_index == self._drag_source_index:
+            return
+
+        # Show visual feedback (highlight target)
+        self._highlight_drop_target(target_index)
+
+    def _on_drag_end(self, event) -> None:
+        """Handle drag end - perform reorder if applicable."""
+        if not hasattr(self, "_drag_source_index"):
+            return
+
+        source = self._drag_source_index
+        target = self._find_card_at_y(event.y_root)
+
+        # Clear drag state
+        del self._drag_source_index
+
+        if target is None or target == source:
+            self._clear_drop_highlights()
+            return
+
+        # Perform reorder
+        if 0 <= source < len(self._config.devices) and 0 <= target < len(self._config.devices):
+            device = self._config.devices.pop(source)
+            self._config.devices.insert(target, device)
             self._refresh_device_list()
+            log.info("Moved device from position %d to %d", source, target)
+
+    def _find_card_at_y(self, y_root: int) -> Optional[int]:
+        """Find which card index is at the given y_root coordinate."""
+        for child in self._device_list_frame.winfo_children():
+            if not hasattr(child, "_device_index"):
+                continue
+            child_top = child.winfo_rooty()
+            child_bottom = child_top + child.winfo_height()
+            if child_top <= y_root <= child_bottom:
+                return child._device_index
+        return None
+
+    def _highlight_drop_target(self, target_index: int) -> None:
+        """Highlight the drop target card."""
+        for child in self._device_list_frame.winfo_children():
+            if not hasattr(child, "_device_index"):
+                continue
+            if child._device_index == target_index:
+                try:
+                    child.configure(bg="#e3f2fd")
+                    for widget in child.winfo_children():
+                        self._recursive_bg(widget, "#e3f2fd")
+                except tk.TclError:
+                    pass
+            else:
+                try:
+                    child.configure(bg="#ffffff")
+                    for widget in child.winfo_children():
+                        self._recursive_bg(widget, "#ffffff")
+                except tk.TclError:
+                    pass
+
+    def _clear_drop_highlights(self) -> None:
+        """Clear all drop target highlights."""
+        for child in self._device_list_frame.winfo_children():
+            if not hasattr(child, "_device_index"):
+                continue
+            try:
+                child.configure(bg="#ffffff")
+                for widget in child.winfo_children():
+                    self._recursive_bg(widget, "#ffffff")
+            except tk.TclError:
+                pass
+
+    def _recursive_bg(self, widget, color: str) -> None:
+        """Recursively set background color for tk widgets."""
+        try:
+            widget.configure(bg=color)
+        except tk.TclError:
+            pass
+        for child in widget.winfo_children():
+            self._recursive_bg(child, color)
 
     def _open_cloud_login(self) -> None:
         """Open cloud login for device import (multi-select mode)."""

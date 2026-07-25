@@ -52,6 +52,9 @@ class DeviceConfig:
     color_temp_up: str = ""  # 色温增加快捷键，如 "ctrl+alt+right"
     color_temp_down: str = ""  # 色温降低快捷键，如 "ctrl+alt+left"
     hotkey_step: int = 5  # 每次调整的步进值（亮度：1-100，色温按比例）
+    # UI display settings - whether to show brightness/color temp controls in flyout
+    show_brightness: bool = True  # 是否在 flyout 中显示亮度调节
+    show_color_temp: bool = True  # 是否在 flyout 中显示色温调节
 
     def is_complete(self) -> bool:
         return bool(self.ip) and bool(self.token) and len(self.token) == 32

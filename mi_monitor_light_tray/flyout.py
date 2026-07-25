@@ -222,16 +222,21 @@ class FlyoutWindow:
         # Get initial color temp range from first reachable device
         ct_min, ct_max = self._get_ct_range()
 
-        self._build_row(outer, "", "亮度",
-                        self._brightness_var,
-                        MiMonitorLight.BRIGHTNESS_MIN,
-                        MiMonitorLight.BRIGHTNESS_MAX,
-                        "", self._on_brightness)
+        self._brightness_row = self._build_row(
+            outer, "", "亮度",
+            self._brightness_var,
+            MiMonitorLight.BRIGHTNESS_MIN,
+            MiMonitorLight.BRIGHTNESS_MAX,
+            "", self._on_brightness)
 
-        self._build_row(outer, "", "色温",
-                        self._color_temp_var,
-                        ct_min, ct_max,
-                        "K", self._on_color_temp)
+        self._color_temp_row = self._build_row(
+            outer, "", "色温",
+            self._color_temp_var,
+            ct_min, ct_max,
+            "K", self._on_color_temp)
+
+        # Apply visibility based on active device
+        self._update_control_visibility()
 
         # ── Footer ───────────────────────────────────────────────────────────
         tk.Frame(self._root, height=1, bg="#2e2e2e").pack(fill="x")
@@ -251,7 +256,7 @@ class FlyoutWindow:
 
     def _build_row(self, parent, icon: str, label: str,
                    var: tk.IntVar, from_: int, to: int,
-                   unit: str, cmd: Callable) -> None:
+                   unit: str, cmd: Callable) -> tk.Frame:
         row = tk.Frame(parent, bg=self.BG)
         row.pack(fill="x", pady=(0, 8))
 
@@ -284,6 +289,8 @@ class FlyoutWindow:
             self._brightness_slider = slider
         else:
             self._color_temp_slider = slider
+
+        return row
 
     def _icon_btn(self, parent, glyph: str, cmd: Callable) -> None:
         btn = tk.Label(parent, text=glyph, fg=self.MUTED, bg=self.BG,
@@ -332,8 +339,35 @@ class FlyoutWindow:
         self._config.active_device_id = self._active_id
         self._config.save()
 
+        # Update control visibility based on new active device
+        self._update_control_visibility()
+
         # Refresh state for selected device
         threading.Thread(target=self._bg_refresh, daemon=True).start()
+
+    def _update_control_visibility(self) -> None:
+        """Show/hide brightness and color temp rows based on active device settings."""
+        if not hasattr(self, "_brightness_row") or not hasattr(self, "_color_temp_row"):
+            return
+
+        if self._active_id == "ALL":
+            # ALL mode: show if any device has it enabled
+            show_brightness = any(d.show_brightness for d in self._config.devices)
+            show_color_temp = any(d.show_color_temp for d in self._config.devices)
+        else:
+            dev = self._find_device_config(self._active_id)
+            show_brightness = dev.show_brightness if dev else True
+            show_color_temp = dev.show_color_temp if dev else True
+
+        if show_brightness:
+            self._brightness_row.pack(fill="x", pady=(0, 8))
+        else:
+            self._brightness_row.pack_forget()
+
+        if show_color_temp:
+            self._color_temp_row.pack(fill="x", pady=(0, 8))
+        else:
+            self._color_temp_row.pack_forget()
 
     def _get_active_light(self) -> Optional[MiMonitorLight]:
         """Get the currently selected light (first reachable if ALL mode)."""
@@ -380,6 +414,8 @@ class FlyoutWindow:
     # ── main-thread helpers ───────────────────────────────────────────────────
 
     def _open(self, x: int, y: int) -> None:
+        # Update control visibility in case settings changed
+        self._update_control_visibility()
         threading.Thread(target=self._bg_refresh, daemon=True).start()
         self._position(x, y)
         self._root.deiconify()
