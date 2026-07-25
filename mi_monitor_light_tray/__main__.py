@@ -469,7 +469,12 @@ class App:
             self._config,
             on_saved=self._on_config_saved,
             parent=self._flyout._root,
+            on_check_update=self._trigger_check_update,
         )
+
+    def _trigger_check_update(self) -> None:
+        """Trigger the same update-check flow as the tray menu."""
+        self._tray._handle_check_update(None, None)
 
     def _on_config_saved(self, config: AppConfig) -> None:
         log.info("Config updated; reconnecting to devices")

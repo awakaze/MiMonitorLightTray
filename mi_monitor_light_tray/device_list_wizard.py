@@ -25,9 +25,11 @@ class DeviceListWizard:
         on_saved: Callable[[AppConfig], None],
         *,
         parent: Optional[tk.Tk] = None,
+        on_check_update: Optional[Callable[[], None]] = None,
     ) -> None:
         self._config = config
         self._on_saved = on_saved
+        self._on_check_update_cb = on_check_update
         self._owns_root = parent is None
 
         self._root = tk.Tk() if parent is None else tk.Toplevel(parent)
@@ -563,9 +565,12 @@ class DeviceListWizard:
             messagebox.showerror("保存失败", str(exc), parent=self._root)
 
     def _on_check_update(self) -> None:
-        """Check for updates."""
-        import webbrowser
-        webbrowser.open("https://github.com/Martlnez/MiMonitorLightTray/releases/latest")
+        """Check for updates — delegates to the tray's check flow."""
+        if self._on_check_update_cb:
+            self._on_check_update_cb()
+        else:
+            import webbrowser
+            webbrowser.open("https://github.com/Martlnez/MiMonitorLightTray/releases/latest")
 
     def _on_open_github(self) -> None:
         """Open GitHub repository."""
