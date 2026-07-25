@@ -70,7 +70,7 @@ class DeviceEditorDialog:
         px = parent.winfo_x()
         py = parent.winfo_y()
         w = 480
-        h = 520
+        h = 680  # Increased height to accommodate hotkey settings
         x = px + (pw - w) // 2
         y = py + (ph - h) // 2
         self._dialog.geometry(f"{w}x{h}+{x}+{y}")
