@@ -1,24 +1,20 @@
-"""Twinkle Tray-style flyout — one row per control, icon + slider + value."""
+"""Twinkle Tray-style flyout — one section per device, each with sliders."""
 
 from __future__ import annotations
 
 import logging
 import threading
 import tkinter as tk
-from tkinter import ttk
 from typing import Callable, Optional
 
 from .miio_client import Debouncer, LightState, MiMonitorLight
-from .config import AppConfig
+from .config import AppConfig, DeviceConfig
 
 log = logging.getLogger(__name__)
 
 
 class _DarkSlider(tk.Canvas):
-    """Canvas-based horizontal slider with full dark-mode color control.
-
-    Replaces ttk.Scale which cannot reliably render dark in all Windows themes.
-    """
+    """Canvas-based horizontal slider with full dark-mode color control."""
 
     TRACK_H  = 4
     THUMB_R  = 8
@@ -59,9 +55,8 @@ class _DarkSlider(tk.Canvas):
         return int(r + self._frac() * (w - 2 * r))
 
     def _draw_circle(self, cx: int, cy: int, r: int, color: str) -> None:
-        """Draw an anti-aliased-looking circle using a smooth polygon."""
         import math
-        n = 32  # enough points for a smooth circle at this size
+        n = 32
         pts = []
         for i in range(n):
             a = 2 * math.pi * i / n
@@ -79,16 +74,13 @@ class _DarkSlider(tk.Canvas):
         r  = self.THUMB_R
         tx = self._thumb_x()
 
-        # Track background
         self.create_rounded_rect(r, cy - self.TRACK_H // 2,
                                   w - r, cy + self.TRACK_H // 2,
                                   2, fill=self.TRACK_BG)
-        # Track fill (filled portion)
         if tx > r:
             self.create_rounded_rect(r, cy - self.TRACK_H // 2,
                                       tx, cy + self.TRACK_H // 2,
                                       2, fill=self.TRACK_FG)
-        # Thumb — smooth polygon circle (no jagged edges)
         col = self.THUMB_HOV if self._hover else self.THUMB_BG
         self._draw_circle(tx, cy, r, col)
 
@@ -125,7 +117,6 @@ class _DarkSlider(tk.Canvas):
         self._set(max(self._from, min(self._to, self._var.get() + step)))
 
     def set_range(self, from_: int, to_: int) -> None:
-        """Update the slider's bounds and re-clamp the current value into them."""
         if from_ == self._from and to_ == self._to:
             return
         self._from = from_
@@ -141,6 +132,144 @@ class _DarkSlider(tk.Canvas):
         self._cmd(str(val))
         self._redraw()
 
+class _DeviceSection:
+    """One visible device block: name label + optional brightness/color-temp rows."""
+
+    BG    = "#1f1f1f"
+    TEXT  = "#ffffff"
+    MUTED = "#8a8a8a"
+
+    def __init__(self, parent: tk.Widget, device: DeviceConfig,
+                 light: MiMonitorLight,
+                 on_brightness: Callable[[str, int], None],
+                 on_color_temp: Callable[[str, int], None],
+                 on_toggle: Callable[[str], None]) -> None:
+        self._device = device
+        self._light = light
+        self._on_brightness = on_brightness
+        self._on_color_temp = on_color_temp
+        self._on_toggle = on_toggle
+        self._suppress = False
+
+        self.frame = tk.Frame(parent, bg=self.BG)
+
+        # Header row: device name + status + power toggle (grid layout for fixed widths)
+        header = tk.Frame(self.frame, bg=self.BG)
+        header.pack(fill="x", pady=(0, 4))
+        header.columnconfigure(0, weight=0)  # Device name, fixed max width
+        header.columnconfigure(1, weight=1)  # Status, fills remaining space
+        header.columnconfigure(2, weight=0)  # Power button, fixed
+
+        # Truncate device name if too long (max 12 chars for Chinese, ~18 for ASCII mix)
+        display_name = device.name or "未命名设备"
+        if len(display_name) > 12:
+            display_name = display_name[:11] + "..."
+
+        tk.Label(header, text=display_name,
+                 fg=self.TEXT, bg=self.BG,
+                 font=("Microsoft YaHei UI", 10, "bold"),
+                 anchor="w", width=13).grid(row=0, column=0, sticky="w")
+
+        self._status_var = tk.StringVar(value="")
+        tk.Label(header, textvariable=self._status_var,
+                 fg=self.MUTED, bg=self.BG,
+                 font=("Microsoft YaHei UI", 9),
+                 anchor="w").grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        power_btn = tk.Label(header, text="⏻", fg=self.MUTED, bg=self.BG,
+                             font=("Segoe UI Symbol", 13),
+                             padx=6, cursor="hand2")
+        power_btn.grid(row=0, column=2, sticky="e")
+        power_btn.bind("<Button-1>", lambda _e: self._on_toggle(device.id))
+        power_btn.bind("<Enter>", lambda _e: power_btn.configure(fg=self.TEXT))
+        power_btn.bind("<Leave>", lambda _e: power_btn.configure(fg=self.MUTED))
+
+        self._brightness_var: Optional[tk.IntVar] = None
+        self._color_temp_var: Optional[tk.IntVar] = None
+        self._brightness_slider: Optional[_DarkSlider] = None
+        self._color_temp_slider: Optional[_DarkSlider] = None
+
+        if device.show_brightness:
+            self._brightness_var = tk.IntVar(value=50)
+            self._brightness_slider = self._build_row(
+                "亮度",
+                self._brightness_var,
+                MiMonitorLight.BRIGHTNESS_MIN,
+                MiMonitorLight.BRIGHTNESS_MAX,
+                "",
+                lambda v: self._on_brightness(device.id, int(float(v))))
+
+        if device.show_color_temp:
+            self._color_temp_var = tk.IntVar(value=4000)
+            self._color_temp_slider = self._build_row(
+                "色温",
+                self._color_temp_var,
+                light.color_temp_min,
+                light.color_temp_max,
+                "K",
+                lambda v: self._on_color_temp(device.id, int(float(v))))
+
+    def _build_row(self, label: str, var: tk.IntVar, from_: int, to: int,
+                   unit: str, cmd: Callable[[str], None]) -> _DarkSlider:
+        row = tk.Frame(self.frame, bg=self.BG)
+        row.pack(fill="x", pady=(0, 6))
+
+        top = tk.Frame(row, bg=self.BG)
+        top.pack(fill="x")
+        tk.Label(top, text=label, fg=self.MUTED, bg=self.BG,
+                 font=("Microsoft YaHei UI", 9),
+                 anchor="w").pack(side="left")
+
+        bot = tk.Frame(row, bg=self.BG)
+        bot.pack(fill="x", pady=(2, 0))
+
+        val_var = tk.StringVar(value="--")
+        tk.Label(bot, textvariable=val_var, fg=self.TEXT, bg=self.BG,
+                 font=("Segoe UI Variable Display", 12, "bold"),
+                 width=6, anchor="e").pack(side="right")
+
+        slider = _DarkSlider(bot, from_=from_, to=to,
+                             variable=var,
+                             command=lambda v, c=cmd: (None if self._suppress else c(v)),
+                             bg=self.BG)
+        slider.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        def _sync(*_, _v=var, _vv=val_var, _u=unit):
+            _vv.set(f"{int(_v.get())}{_u}")
+        var.trace_add("write", _sync)
+        _sync()
+        return slider
+
+    def apply_state(self, state: LightState) -> None:
+        self._suppress = True
+        try:
+            if self._brightness_var is not None:
+                b = max(MiMonitorLight.BRIGHTNESS_MIN,
+                        state.brightness or MiMonitorLight.BRIGHTNESS_MIN)
+                self._brightness_var.set(b)
+            if self._color_temp_var is not None and self._color_temp_slider is not None:
+                ct = state.color_temp or 4000
+                ct = max(self._light.color_temp_min,
+                         min(self._light.color_temp_max, ct))
+                self._color_temp_var.set(ct)
+        finally:
+            self._suppress = False
+
+        if state.reachable:
+            self._status_var.set("已开灯" if state.is_on else "已关灯")
+        else:
+            err = (state.error or "")[:30]
+            self._status_var.set(f"离线 — {err}" if err else "离线")
+
+    def apply_ct_range(self, lo: int, hi: int) -> None:
+        if self._color_temp_slider is None:
+            return
+        self._suppress = True
+        try:
+            self._color_temp_slider.set_range(lo, hi)
+        finally:
+            self._suppress = False
+
 
 class FlyoutWindow:
     WIDTH    = 360
@@ -150,7 +279,6 @@ class FlyoutWindow:
     BG       = "#1f1f1f"
     TEXT     = "#ffffff"
     MUTED    = "#8a8a8a"
-    ACCENT   = "#60cdff"
 
     def __init__(self, lights: dict[str, MiMonitorLight],
                  config: AppConfig,
@@ -158,7 +286,6 @@ class FlyoutWindow:
         self._lights        = lights
         self._config        = config
         self._on_open_setup = on_open_setup
-        self._active_id     = config.active_device_id  # "ALL" or specific device id
 
         self._root = tk.Tk()
         self._root.withdraw()
@@ -169,240 +296,120 @@ class FlyoutWindow:
             self._root.attributes("-alpha", 0.97)
         except tk.TclError:
             pass
-        self._brightness_debounce = Debouncer(delay=0.12)
-        self._color_temp_debounce = Debouncer(delay=0.18)
-        self._suppress = False
+        self._brightness_debouncers: dict[str, Debouncer] = {}
+        self._color_temp_debouncers: dict[str, Debouncer] = {}
         self._visible  = False
+        self._sections: dict[str, _DeviceSection] = {}
 
         self._build_ui()
         self._root.bind("<FocusOut>", self._on_focus_out)
         self._root.bind("<Escape>",   lambda _e: self.hide())
 
-    # ── rounded corners ──────────────────────────────────────────────────────
-
     def _apply_rounded_corners(self) -> None:
         try:
             import ctypes
-            # winfo_id() gives the embedded frame; GetAncestor(GA_ROOT=2) gets the true top-level HWND
             hwnd = ctypes.windll.user32.GetAncestor(self._root.winfo_id(), 2)
-            val  = ctypes.c_int(2)   # DWMWCP_ROUND
+            val  = ctypes.c_int(2)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 33, ctypes.byref(val), 4)
         except Exception:
             pass
 
-    # ── UI construction ──────────────────────────────────────────────────────
-
     def _build_ui(self) -> None:
-        outer = tk.Frame(self._root, bg=self.BG)
-        outer.pack(fill="x", padx=self.PAD_X, pady=(self.PAD_Y, 0))
+        self._container = tk.Frame(self._root, bg=self.BG)
+        self._container.pack(fill="both", expand=True,
+                             padx=self.PAD_X, pady=(self.PAD_Y, 0))
 
-        # Device selector (only show if multiple devices or "ALL" mode makes sense)
-        if len(self._lights) > 1:
-            selector_frame = tk.Frame(outer, bg=self.BG)
-            selector_frame.pack(fill="x", pady=(0, 8))
+        self._devices_frame = tk.Frame(self._container, bg=self.BG)
+        self._devices_frame.pack(fill="x")
 
-            tk.Label(selector_frame, text="设备", fg=self.MUTED, bg=self.BG,
-                     font=("Microsoft YaHei UI", 9),
-                     anchor="w").pack(side="left", padx=(0, 8))
+        self._build_device_sections()
 
-            self._device_var = tk.StringVar(value=self._format_device_option(self._active_id))
-            device_combo = ttk.Combobox(
-                selector_frame, textvariable=self._device_var,
-                state="readonly", width=25,
-                font=("Microsoft YaHei UI", 9)
-            )
-            device_combo['values'] = self._build_device_options()
-            device_combo.bind("<<ComboboxSelected>>", self._on_device_changed)
-            device_combo.pack(side="left", fill="x", expand=True)
-
-        self._brightness_var = tk.IntVar(value=50)
-        self._color_temp_var = tk.IntVar(value=4000)
-
-        # Get initial color temp range from first reachable device
-        ct_min, ct_max = self._get_ct_range()
-
-        self._brightness_row = self._build_row(
-            outer, "", "亮度",
-            self._brightness_var,
-            MiMonitorLight.BRIGHTNESS_MIN,
-            MiMonitorLight.BRIGHTNESS_MAX,
-            "", self._on_brightness)
-
-        self._color_temp_row = self._build_row(
-            outer, "", "色温",
-            self._color_temp_var,
-            ct_min, ct_max,
-            "K", self._on_color_temp)
-
-        # Apply visibility based on active device
-        self._update_control_visibility()
-
-        # ── Footer ───────────────────────────────────────────────────────────
+        # Footer: status label (left) + power-off-all button + settings button (right)
         tk.Frame(self._root, height=1, bg="#2e2e2e").pack(fill="x")
         footer = tk.Frame(self._root, bg=self.BG)
         footer.pack(fill="x", padx=self.PAD_X, pady=(4, 6))
 
-        self._status_var = tk.StringVar(value="调整亮度")
-        tk.Label(footer, textvariable=self._status_var,
+        self._empty_var = tk.StringVar(value="")
+        tk.Label(footer, textvariable=self._empty_var,
                  fg=self.MUTED, bg=self.BG,
-                 font=("Segoe UI", 9)).pack(side="left")
+                 font=("Microsoft YaHei UI", 9)).pack(side="left")
 
-        for glyph, cmd in reversed([
-            ("⚙", self._open_settings),
-            ("⏻", self._on_toggle_power),
-        ]):
-            self._icon_btn(footer, glyph, cmd)
+        # Settings button (rightmost)
+        settings_btn = tk.Label(footer, text="⚙", fg=self.MUTED, bg=self.BG,
+                                font=("Segoe UI Symbol", 14),
+                                padx=6, cursor="hand2")
+        settings_btn.pack(side="right")
+        settings_btn.bind("<Button-1>", lambda _e: self._open_settings())
+        settings_btn.bind("<Enter>", lambda _e: settings_btn.configure(fg=self.TEXT))
+        settings_btn.bind("<Leave>", lambda _e: settings_btn.configure(fg=self.MUTED))
 
-    def _build_row(self, parent, icon: str, label: str,
-                   var: tk.IntVar, from_: int, to: int,
-                   unit: str, cmd: Callable) -> tk.Frame:
-        row = tk.Frame(parent, bg=self.BG)
-        row.pack(fill="x", pady=(0, 8))
+        # Power-off-all button (left of settings)
+        poweroff_all_btn = tk.Label(footer, text="⏻", fg=self.MUTED, bg=self.BG,
+                                    font=("Segoe UI Symbol", 14),
+                                    padx=6, cursor="hand2")
+        poweroff_all_btn.pack(side="right")
+        poweroff_all_btn.bind("<Button-1>", lambda _e: self._on_power_off_all())
+        poweroff_all_btn.bind("<Enter>", lambda _e: poweroff_all_btn.configure(fg=self.TEXT))
+        poweroff_all_btn.bind("<Leave>", lambda _e: poweroff_all_btn.configure(fg=self.MUTED))
 
-        top = tk.Frame(row, bg=self.BG)
-        top.pack(fill="x")
-        tk.Label(top, text=icon, fg=self.MUTED, bg=self.BG,
-                 font=("Segoe MDL2 Assets", 12)).pack(side="left", padx=(0, 6))
-        tk.Label(top, text=label, fg=self.TEXT, bg=self.BG,
-                 font=("Microsoft YaHei UI", 10),
-                 anchor="w").pack(side="left")
+    def _build_device_sections(self) -> None:
+        """Build one section per device that has at least one control visible."""
+        for w in self._devices_frame.winfo_children():
+            w.destroy()
+        self._sections.clear()
 
-        bot = tk.Frame(row, bg=self.BG)
-        bot.pack(fill="x", pady=(4, 0))
+        visible = [d for d in self._config.devices
+                   if d.id in self._lights and (d.show_brightness or d.show_color_temp)]
 
-        val_var = tk.StringVar(value="--")
-        tk.Label(bot, textvariable=val_var, fg=self.TEXT, bg=self.BG,
-                 font=("Segoe UI Variable Display", 14, "bold"),
-                 width=5, anchor="e").pack(side="right")
+        for idx, dev in enumerate(visible):
+            light = self._lights[dev.id]
+            section = _DeviceSection(
+                self._devices_frame, dev, light,
+                on_brightness=self._on_brightness,
+                on_color_temp=self._on_color_temp,
+                on_toggle=self._on_toggle,
+            )
+            pad_top = 0 if idx == 0 else 6
+            section.frame.pack(fill="x", pady=(pad_top, 4))
+            if idx < len(visible) - 1:
+                tk.Frame(self._devices_frame, height=1, bg="#2e2e2e"
+                         ).pack(fill="x", pady=(2, 0))
+            self._sections[dev.id] = section
 
-        slider = _DarkSlider(bot, from_=from_, to=to,
-                             variable=var, command=cmd, bg=self.BG)
-        slider.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        # Show empty hint if no visible sections
+        if hasattr(self, "_empty_var"):
+            self._empty_var.set("" if visible else "无可显示的设备")
 
-        def _sync(*_, _v=var, _vv=val_var, _u=unit):
-            _vv.set(f"{int(_v.get())}{_u}")
-        var.trace_add("write", _sync)
-        _sync()
+    def rebuild(self, lights: dict[str, MiMonitorLight],
+                config: AppConfig) -> None:
+        """Rebuild device sections after config change."""
+        self._lights = lights
+        self._config = config
+        self._build_device_sections()
 
-        if unit == "":
-            self._brightness_slider = slider
-        else:
-            self._color_temp_slider = slider
-
-        return row
-
-    def _icon_btn(self, parent, glyph: str, cmd: Callable) -> None:
-        btn = tk.Label(parent, text=glyph, fg=self.MUTED, bg=self.BG,
-                       font=("Segoe UI Symbol", 14),
-                       padx=6, cursor="hand2")
-        btn.pack(side="right")
-        btn.bind("<Button-1>", lambda _: cmd())
-        btn.bind("<Enter>",    lambda _: btn.configure(fg=self.TEXT))
-        btn.bind("<Leave>",    lambda _: btn.configure(fg=self.MUTED))
-
-    # ── device selector helpers ───────────────────────────────────────────────
-
-    def _build_device_options(self) -> list[str]:
-        """Build dropdown options: ['所有设备', 'Device 1', 'Device 2', ...]"""
-        options = ["所有设备"]
-        for dev_id in self._lights.keys():
-            dev_config = self._find_device_config(dev_id)
-            name = dev_config.name if dev_config else f"设备 {dev_id[:8]}"
-            options.append(name)
-        return options
-
-    def _format_device_option(self, device_id: str) -> str:
-        """Convert device_id to display name for dropdown."""
-        if device_id == "ALL":
-            return "所有设备"
-        dev_config = self._find_device_config(device_id)
-        return dev_config.name if dev_config else f"设备 {device_id[:8]}"
-
-    def _find_device_config(self, device_id: str):
-        """Find DeviceConfig by id."""
-        return next((d for d in self._config.devices if d.id == device_id), None)
-
-    def _on_device_changed(self, event) -> None:
-        """Handle device selection change."""
-        selected = self._device_var.get()
-        if selected == "所有设备":
-            self._active_id = "ALL"
-        else:
-            # Find device id by name
-            for dev_config in self._config.devices:
-                if dev_config.name == selected:
-                    self._active_id = dev_config.id
-                    break
-
-        # Save active device to config
-        self._config.active_device_id = self._active_id
-        self._config.save()
-
-        # Update control visibility based on new active device
-        self._update_control_visibility()
-
-        # Refresh state for selected device
-        threading.Thread(target=self._bg_refresh, daemon=True).start()
-
-    def _update_control_visibility(self) -> None:
-        """Show/hide brightness and color temp rows based on active device settings."""
-        if not hasattr(self, "_brightness_row") or not hasattr(self, "_color_temp_row"):
-            return
-
-        if self._active_id == "ALL":
-            # ALL mode: show if any device has it enabled
-            show_brightness = any(d.show_brightness for d in self._config.devices)
-            show_color_temp = any(d.show_color_temp for d in self._config.devices)
-        else:
-            dev = self._find_device_config(self._active_id)
-            show_brightness = dev.show_brightness if dev else True
-            show_color_temp = dev.show_color_temp if dev else True
-
-        if show_brightness:
-            self._brightness_row.pack(fill="x", pady=(0, 8))
-        else:
-            self._brightness_row.pack_forget()
-
-        if show_color_temp:
-            self._color_temp_row.pack(fill="x", pady=(0, 8))
-        else:
-            self._color_temp_row.pack_forget()
-
-    def _get_active_light(self) -> Optional[MiMonitorLight]:
-        """Get the currently selected light (first reachable if ALL mode)."""
-        if self._active_id == "ALL":
-            # Return first reachable device
-            for light in self._lights.values():
-                if light.state.reachable:
-                    return light
-            # All offline, return first device
-            return next(iter(self._lights.values()), None)
-        else:
-            return self._lights.get(self._active_id)
-
-    def _get_ct_range(self) -> tuple[int, int]:
-        """Get color temp range from active device."""
-        light = self._get_active_light()
-        if light:
-            return light.color_temp_min, light.color_temp_max
-        return 2700, 6500  # Default range
-
-    # ── thread-safe entry points ──────────────────────────────────────────────
+    def _debouncer(self, table: dict[str, Debouncer], device_id: str,
+                   delay: float) -> Debouncer:
+        deb = table.get(device_id)
+        if deb is None:
+            deb = Debouncer(delay=delay)
+            table[device_id] = deb
+        return deb
 
     def schedule_open(self, x: int, y: int) -> None:
         self._root.after(0, lambda: self._open(x, y))
 
-    def schedule_apply_state(self, state: LightState) -> None:
-        self._root.after(0, lambda: self._apply_state(state))
+    def schedule_apply_state(self, state: LightState, device_id: str) -> None:
+        self._root.after(0, lambda: self._apply_state(state, device_id))
 
-    def schedule_apply_ct_range(self, lo: int, hi: int) -> None:
-        """Push a new color-temp slider range from any thread."""
-        self._root.after(0, lambda: self._apply_ct_range(lo, hi))
+    def schedule_apply_ct_range(self, device_id: str, lo: int, hi: int) -> None:
+        self._root.after(0, lambda: self._apply_ct_range(device_id, lo, hi))
 
     def shutdown(self) -> None:
-        self._brightness_debounce.cancel()
-        self._color_temp_debounce.cancel()
+        for d in self._brightness_debouncers.values():
+            d.cancel()
+        for d in self._color_temp_debouncers.values():
+            d.cancel()
         try:
             self._root.after(0, self._root.destroy)
         except tk.TclError:
@@ -411,18 +418,15 @@ class FlyoutWindow:
     def run(self) -> None:
         self._root.mainloop()
 
-    # ── main-thread helpers ───────────────────────────────────────────────────
-
     def _open(self, x: int, y: int) -> None:
-        # Update control visibility in case settings changed
-        self._update_control_visibility()
-        threading.Thread(target=self._bg_refresh, daemon=True).start()
+        # Rebuild in case device visibility settings changed
+        self._build_device_sections()
+        threading.Thread(target=self._bg_refresh_all, daemon=True).start()
         self._position(x, y)
         self._root.deiconify()
         self._root.lift()
         self._root.focus_force()
         self._visible = True
-        # Apply rounded corners after window is visible (DWM requires the HWND to exist)
         self._apply_rounded_corners()
 
     def hide(self) -> None:
@@ -436,102 +440,72 @@ class FlyoutWindow:
 
     def _position(self, ax: int, ay: int) -> None:
         self._root.update_idletasks()
-        w = self.WIDTH   # force fixed width, ignore content's natural width
-        h = self._root.winfo_reqheight()
-        self._root.geometry(f"{w}x{h}")  # set width first so content reflows
+        w = self.WIDTH
+        # Force width first so content reflows, then re-measure height
+        self._root.geometry(f"{w}x100")
         self._root.update_idletasks()
-        h = self._root.winfo_reqheight()  # re-measure after reflow
+        h = self._root.winfo_reqheight()
         sw = self._root.winfo_screenwidth()
         sh = self._root.winfo_screenheight()
         x  = max(8, min(sw - w - 8, ax - w // 2))
         y  = max(8, min(sh - h - 8, ay - h  - 35))
         self._root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _apply_state(self, state: LightState) -> None:
-        self._suppress = True
-        try:
-            b = max(MiMonitorLight.BRIGHTNESS_MIN,
-                    state.brightness or MiMonitorLight.BRIGHTNESS_MIN)
-            self._brightness_var.set(b)
-            ct = state.color_temp or 4000
-            ct = max(self._light.color_temp_min,
-                     min(self._light.color_temp_max, ct))
-            self._color_temp_var.set(ct)
-        finally:
-            self._suppress = False
+    def _apply_state(self, state: LightState, device_id: str) -> None:
+        section = self._sections.get(device_id)
+        if section:
+            section.apply_state(state)
 
-        if state.reachable:
-            self._status_var.set("已开灯" if state.is_on else "已关灯")
-        else:
-            self._status_var.set(f"离线 — {(state.error or '')[:40]}")
+    def _apply_ct_range(self, device_id: str, lo: int, hi: int) -> None:
+        section = self._sections.get(device_id)
+        if section:
+            section.apply_ct_range(lo, hi)
 
-    def _apply_ct_range(self, lo: int, hi: int) -> None:
-        """Update the color-temp slider's bounds — called after model is resolved."""
-        slider = getattr(self, "_color_temp_slider", None)
-        if slider is None:
-            return
-        self._suppress = True
-        try:
-            slider.set_range(lo, hi)
-        finally:
-            self._suppress = False
-
-    # ── callbacks ────────────────────────────────────────────────────────────
-
-    def _bg_refresh(self) -> None:
-        light = self._get_active_light()
-        if light:
+    def _bg_refresh_all(self) -> None:
+        for dev_id, light in self._lights.items():
+            if dev_id not in self._sections:
+                continue
             state = light.refresh()
-            self._root.after(0, lambda: self._apply_state(state))
+            self._root.after(0, lambda s=state, d=dev_id: self._apply_state(s, d))
 
-    def _on_brightness(self, v: str) -> None:
-        if self._suppress:
+    def _on_brightness(self, device_id: str, val: int) -> None:
+        light = self._lights.get(device_id)
+        if light:
+            self._debouncer(self._brightness_debouncers, device_id, 0.12
+                            ).call(light.set_brightness, val)
+
+    def _on_color_temp(self, device_id: str, val: int) -> None:
+        light = self._lights.get(device_id)
+        if light:
+            self._debouncer(self._color_temp_debouncers, device_id, 0.18
+                            ).call(light.set_color_temp, val)
+
+    def _on_toggle(self, device_id: str) -> None:
+        light = self._lights.get(device_id)
+        if not light:
             return
-        val = int(float(v))
-        if self._active_id == "ALL":
-            # Broadcast to all reachable devices
-            for light in self._lights.values():
-                if light.state.reachable:
-                    self._brightness_debounce.call(light.set_brightness, val)
-        else:
-            light = self._lights.get(self._active_id)
-            if light:
-                self._brightness_debounce.call(light.set_brightness, val)
+        threading.Thread(target=self._toggle_thread,
+                         args=(device_id, light), daemon=True).start()
 
-    def _on_color_temp(self, v: str) -> None:
-        if self._suppress:
-            return
-        val = int(float(v))
-        if self._active_id == "ALL":
-            # Broadcast to all reachable devices
-            for light in self._lights.values():
-                if light.state.reachable:
-                    self._color_temp_debounce.call(light.set_color_temp, val)
-        else:
-            light = self._lights.get(self._active_id)
-            if light:
-                self._color_temp_debounce.call(light.set_color_temp, val)
+    def _toggle_thread(self, device_id: str, light: MiMonitorLight) -> None:
+        light.toggle()
+        state = light.state
+        self._root.after(0, lambda: self._apply_state(state, device_id))
 
-    def _on_toggle_power(self) -> None:
-        threading.Thread(target=self._toggle_thread, daemon=True).start()
+    def _on_power_off_all(self) -> None:
+        """Turn off all reachable devices."""
+        threading.Thread(target=self._power_off_all_thread, daemon=True).start()
 
-    def _toggle_thread(self) -> None:
-        if self._active_id == "ALL":
-            # Broadcast to all devices
-            for light in self._lights.values():
-                light.toggle()
-            # Show aggregate status
-            any_on = any(l.state.is_on for l in self._lights.values() if l.state.reachable)
-            self._root.after(0, lambda: self._status_var.set("已开灯" if any_on else "已关灯"))
-        else:
-            light = self._lights.get(self._active_id)
-            if light:
-                new = light.toggle()
-                st = light.state
-                self._root.after(0, lambda: self._status_var.set(
-                    "已开灯" if new else "已关灯"
-                    if st.reachable else f"离线 — {(st.error or '')[:40]}"))
+    def _power_off_all_thread(self) -> None:
+        for light in self._lights.values():
+            if light.state.reachable:
+                light.set_power(False)
+        # Refresh all sections to show updated status
+        for dev_id, light in self._lights.items():
+            state = light.state
+            self._root.after(0, lambda s=state, d=dev_id: self._apply_state(s, d))
 
     def _open_settings(self) -> None:
         self.hide()
         self._on_open_setup()
+

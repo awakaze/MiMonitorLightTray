@@ -402,9 +402,7 @@ class App:
 
     def _on_state_changed(self, state: "LightState", device_id: str) -> None:
         # Called from worker threads — marshal to Tk thread.
-        # Only update flyout if this is the active device or in ALL mode
-        if self._config.active_device_id == "ALL" or self._config.active_device_id == device_id:
-            self._flyout.schedule_apply_state(state)
+        self._flyout.schedule_apply_state(state, device_id)
 
         # Update tray with aggregate status
         any_on = any(l.state.is_on for l in self._lights.values() if l.state.reachable)
@@ -424,9 +422,7 @@ class App:
 
     def _on_ct_range_changed(self, device_id: str, lo: int, hi: int) -> None:
         """Called from a worker thread once info() resolves the model — push to UI."""
-        # Only update flyout if this is the first device (backward compat)
-        if self._config.devices and device_id == self._config.devices[0].id:
-            self._flyout.schedule_apply_ct_range(lo, hi)
+        self._flyout.schedule_apply_ct_range(device_id, lo, hi)
 
     def _on_model_resolved(self, device_id: str, model: str) -> None:
         """Persist an auto-detected model to config (worker thread)."""
@@ -492,21 +488,15 @@ class App:
                 self._lights[dev_config.id] = existing
             else:
                 light = self._build_light(dev_config, self._MiMonitorLight)
-                light.set_listener(self._on_state_changed)
+                did = dev_config.id
+                light.set_listener(lambda state, d=did: self._on_state_changed(state, d))
                 self._lights[dev_config.id] = light
 
-        # Update flyout with first available light (backward compat)
-        first_light = next(iter(self._lights.values()), None)
-        self._flyout._light = first_light
-        if first_light:
-            # Reset slider bounds to whatever the freshly-built light reports —
-            # info() will refine them once we reconnect, but this keeps the slider
-            # consistent if the user picked a different model in the wizard.
-            self._flyout.schedule_apply_ct_range(
-                first_light.color_temp_min, first_light.color_temp_max
-            )
+        # Rebuild flyout device sections from new config
+        self._flyout.rebuild(self._lights, self._config)
 
         # Update tray
+        first_light = next(iter(self._lights.values()), None)
         self._tray.set_title("Mi Monitor Light")
         if first_light:
             self._tray._light = first_light
