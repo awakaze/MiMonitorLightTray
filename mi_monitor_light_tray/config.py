@@ -26,6 +26,7 @@ def _default_config_dir() -> Path:
 
 @dataclass
 class DeviceConfig:
+    id: str = ""  # Stable identifier: synthetic for new devices, hex(device_id) after connection
     ip: str = ""
     token: str = ""
     name: str = "Mi Monitor Light"
@@ -75,7 +76,8 @@ class WidgetConfig:
 
 @dataclass
 class AppConfig:
-    device: DeviceConfig = field(default_factory=DeviceConfig)
+    devices: list[DeviceConfig] = field(default_factory=list)
+    active_device_id: str = "ALL"  # "ALL" or specific device id for UI selection
     widget: WidgetConfig = field(default_factory=WidgetConfig)
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     auto_check_update: bool = True  # 启动时自动检查更新
@@ -90,10 +92,29 @@ class AppConfig:
         except (OSError, json.JSONDecodeError) as exc:
             log.warning("Failed to read config %s: %s", path, exc)
             return cls()
-        dev_data = data.get("device", {})
-        # Tolerate legacy keys silently — DeviceConfig(**unknown) would raise.
-        known = {f for f in DeviceConfig.__dataclass_fields__}
-        dev = DeviceConfig(**{k: v for k, v in dev_data.items() if k in known})
+
+        # MIGRATION: Convert single "device" to "devices" list
+        if "device" in data and "devices" not in data:
+            single_dev = data.pop("device")
+            if single_dev.get("ip") or single_dev.get("token"):
+                # Generate id for migrated device if it doesn't have one
+                if "id" not in single_dev or not single_dev["id"]:
+                    import uuid
+                    single_dev["id"] = f"temp_{uuid.uuid4().hex[:8]}"
+                data["devices"] = [single_dev]
+                log.info("Migrated single-device config to multi-device format")
+
+        # Load devices list
+        devices_data = data.get("devices", [])
+        dev_known = {f for f in DeviceConfig.__dataclass_fields__}
+        devices = []
+        for d in devices_data:
+            # Ensure each device has an id
+            if "id" not in d or not d["id"]:
+                import uuid
+                d["id"] = f"temp_{uuid.uuid4().hex[:8]}"
+            devices.append(DeviceConfig(**{k: v for k, v in d.items() if k in dev_known}))
+
         # 加载小部件配置
         widget_data = data.get("widget", {})
         widget_known = {f for f in WidgetConfig.__dataclass_fields__}
@@ -104,13 +125,23 @@ class AppConfig:
         hotkey = HotkeyConfig(**{k: v for k, v in hotkey_data.items() if k in hotkey_known})
         # 加载自动更新检查配置
         auto_check_update = data.get("auto_check_update", True)
-        return cls(device=dev, widget=widget, hotkey=hotkey, auto_check_update=auto_check_update)
+        # 加载活动设备 ID
+        active_device_id = data.get("active_device_id", "ALL")
+
+        return cls(
+            devices=devices,
+            active_device_id=active_device_id,
+            widget=widget,
+            hotkey=hotkey,
+            auto_check_update=auto_check_update
+        )
 
     def save(self, path: Optional[Path] = None) -> None:
         path = path or default_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "device": asdict(self.device),
+            "devices": [asdict(d) for d in self.devices],
+            "active_device_id": self.active_device_id,
             "widget": asdict(self.widget),
             "hotkey": asdict(self.hotkey),
             "auto_check_update": self.auto_check_update,

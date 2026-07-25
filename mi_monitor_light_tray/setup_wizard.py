@@ -132,11 +132,13 @@ class SetupWizard:
         fetch_btn.pack(side="right")
 
         # ── Fields ─────────────────────────────────────────────────────────────
-        self._ip_var    = tk.StringVar(value=self._config.device.ip)
-        self._token_var = tk.StringVar(value=self._config.device.token)
-        self._name_var  = tk.StringVar(
-            value=self._config.device.name or "显示器挂灯")
-        self._model_var = tk.StringVar(value=self._config.device.model)
+        # Load first device if exists
+        first_device = self._config.devices[0] if self._config.devices else DeviceConfig()
+
+        self._ip_var    = tk.StringVar(value=first_device.ip)
+        self._token_var = tk.StringVar(value=first_device.token)
+        self._name_var  = tk.StringVar(value=first_device.name or "显示器挂灯")
+        self._model_var = tk.StringVar(value=first_device.model)
 
         fields = [
             ("设备 IP 地址", self._ip_var,    False,
@@ -190,8 +192,10 @@ class SetupWizard:
                         ).grid(row=5, column=0, sticky="w", padx=16)
 
         # ── New per-device toggles ─────────────────────────────────────────────
+        first_device = self._config.devices[0] if self._config.devices else DeviceConfig()
+
         self._power_on_at_startup_var = tk.BooleanVar(
-            value=self._config.device.power_on_at_startup)
+            value=first_device.power_on_at_startup)
         cb_on = ttk.Checkbutton(
             frm, text="灯跟随软件启动",
             variable=self._power_on_at_startup_var,
@@ -200,7 +204,7 @@ class SetupWizard:
         _Tooltip(cb_on, "勾选后：程序启动时自动开灯")
 
         self._power_off_at_exit_var = tk.BooleanVar(
-            value=self._config.device.power_off_at_exit)
+            value=first_device.power_off_at_exit)
         cb_off = ttk.Checkbutton(
             frm, text="灯跟随软件关闭",
             variable=self._power_off_at_exit_var,
@@ -209,7 +213,7 @@ class SetupWizard:
         _Tooltip(cb_off, "勾选后：程序退出时自动关灯")
 
         self._power_off_on_monitor_sleep_var = tk.BooleanVar(
-            value=self._config.device.power_off_on_monitor_sleep)
+            value=first_device.power_off_on_monitor_sleep)
         cb_monitor = ttk.Checkbutton(
             frm, text="灯随显示器休眠开关",
             variable=self._power_off_on_monitor_sleep_var,
@@ -218,7 +222,7 @@ class SetupWizard:
         _Tooltip(cb_monitor, "勾选后：显示器休眠时自动关灯\n显示器唤醒时自动开灯")
 
         self._power_off_on_system_suspend_var = tk.BooleanVar(
-            value=self._config.device.power_off_on_system_suspend)
+            value=first_device.power_off_on_system_suspend)
         cb_system_off = ttk.Checkbutton(
             frm, text="系统休眠时关灯",
             variable=self._power_off_on_system_suspend_var,
@@ -227,7 +231,7 @@ class SetupWizard:
         _Tooltip(cb_system_off, "勾选后：系统进入睡眠/休眠时自动关灯")
 
         self._power_on_on_system_resume_var = tk.BooleanVar(
-            value=self._config.device.power_on_on_system_resume)
+            value=first_device.power_on_on_system_resume)
         cb_system_on = ttk.Checkbutton(
             frm, text="系统唤醒时开灯",
             variable=self._power_on_on_system_resume_var,
@@ -236,7 +240,7 @@ class SetupWizard:
         _Tooltip(cb_system_on, "勾选后：系统从睡眠/休眠唤醒时自动开灯")
 
         self._enable_miot_var = tk.BooleanVar(
-            value=self._config.device.enable_miot_for_unknown)
+            value=first_device.enable_miot_for_unknown)
         cb_miot = ttk.Checkbutton(
             frm, text="启用 MIoT（实验性）",
             variable=self._enable_miot_var,
@@ -341,12 +345,23 @@ class SetupWizard:
     def _collect(self) -> DeviceConfig:
         # Preserve device_id captured by a prior successful connection or test —
         # never wipe it here, or auto-rediscovery on IP change stops working.
+        # Get existing device if editing first device, otherwise create new
+        existing_device = self._config.devices[0] if self._config.devices else None
+        device_id_to_use = self._tested_device_id or (existing_device.device_id if existing_device else 0)
+        id_to_use = existing_device.id if existing_device else ""
+
+        # Generate new id if needed
+        if not id_to_use:
+            import uuid
+            id_to_use = f"temp_{uuid.uuid4().hex[:8]}"
+
         return DeviceConfig(
+            id=id_to_use,
             ip=self._ip_var.get().strip(),
             token=self._token_var.get().strip(),
             name=self._name_var.get().strip() or "显示器挂灯",
             model=self._model_var.get().strip(),
-            device_id=self._tested_device_id or self._config.device.device_id,
+            device_id=device_id_to_use,
             enable_miot_for_unknown=self._enable_miot_var.get(),
             power_on_at_startup=self._power_on_at_startup_var.get(),
             power_off_at_exit=self._power_off_at_exit_var.get(),
@@ -392,7 +407,15 @@ class SetupWizard:
                                  "请填写设备 IP 地址和 32 位 Token",
                                  parent=self._root)
             return
-        self._config.device = dev
+
+        # Update or add device to config
+        if self._config.devices:
+            # Update first device (backward compat - wizard edits first device)
+            self._config.devices[0] = dev
+        else:
+            # Add as first device
+            self._config.devices = [dev]
+
         # Collect hotkey settings
         self._config.hotkey = HotkeyConfig(
             brightness_up=self._hotkey_brightness_up_var.get().strip(),

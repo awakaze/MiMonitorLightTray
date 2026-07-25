@@ -54,6 +54,13 @@ _MIOT_MAPPINGS: Dict[str, Dict[str, Dict[str, int]]] = {
         "brightness":        {"siid": 2, "piid": 2},
         "color_temperature": {"siid": 2, "piid": 3},
     },
+    # xiaomi.light.bar2 — 米家显示器挂灯 2 (2026 release, MIoT-only)
+    # Same Light-service layout as lamp22: siid=2, piids 1/2/3.
+    "xiaomi.light.bar2": {
+        "power":             {"siid": 2, "piid": 1},
+        "brightness":        {"siid": 2, "piid": 2},
+        "color_temperature": {"siid": 2, "piid": 3},
+    },
 }
 
 # Generic Light-service mapping used as a fallback when the user opts to treat
@@ -260,6 +267,7 @@ class MiMonitorLight:
     # value is provably wrong on real hardware.
     MODEL_CT_RANGES: dict[str, tuple[int, int]] = {
         "yeelink.light.lamp2": (2500, 4800),  # 米家台灯 Pro — not in python-miio specs.yaml
+        "xiaomi.light.bar2":  (2700, 6500),   # 米家显示器挂灯 2 — MIoT-only, not in specs.yaml
     }
 
     @classmethod

@@ -39,35 +39,46 @@ class App:
         from .version_checker import VersionChecker
 
         self._config = config
-        self._light = self._build_light(config, MiMonitorLight)
-        self._flyout = FlyoutWindow(self._light, on_open_setup=self._open_settings)
+        # Dict[device_id, MiMonitorLight] - keyed by DeviceConfig.id
+        self._lights: dict[str, MiMonitorLight] = {}
+
+        # Build all lights from config
+        for dev_config in config.devices:
+            if dev_config.is_complete():
+                light = self._build_light(dev_config, MiMonitorLight)
+                self._lights[dev_config.id] = light
+
+        # Pass first available light to flyout for backward compat during migration
+        first_light = next(iter(self._lights.values()), None)
+        self._flyout = FlyoutWindow(first_light, on_open_setup=self._open_settings)
 
         # Initialize version checker
         self._version_checker = VersionChecker()
         self._update_available = False
 
         self._tray = TrayController(
-            title=config.device.name or "Mi Monitor Light",
+            title="Mi Monitor Light",
             on_left_click=self._on_tray_click,
             on_open_settings=self._open_settings,
             on_exit=self._on_exit,
-            get_power_on_at_startup=lambda: self._config.device.power_on_at_startup,
+            get_power_on_at_startup=lambda: any(d.power_on_at_startup for d in self._config.devices),
             on_toggle_power_on_at_startup=self._toggle_power_on_at_startup,
-            get_power_off_at_exit=lambda: self._config.device.power_off_at_exit,
+            get_power_off_at_exit=lambda: any(d.power_off_at_exit for d in self._config.devices),
             on_toggle_power_off_at_exit=self._toggle_power_off_at_exit,
-            get_power_off_on_monitor_sleep=lambda: self._config.device.power_off_on_monitor_sleep,
+            get_power_off_on_monitor_sleep=lambda: any(d.power_off_on_monitor_sleep for d in self._config.devices),
             on_toggle_power_off_on_monitor_sleep=self._toggle_power_off_on_monitor_sleep,
-            get_power_off_on_system_suspend=lambda: self._config.device.power_off_on_system_suspend,
+            get_power_off_on_system_suspend=lambda: any(d.power_off_on_system_suspend for d in self._config.devices),
             on_toggle_power_off_on_system_suspend=self._toggle_power_off_on_system_suspend,
-            get_power_on_on_system_resume=lambda: self._config.device.power_on_on_system_resume,
+            get_power_on_on_system_resume=lambda: any(d.power_on_on_system_resume for d in self._config.devices),
             on_toggle_power_on_on_system_resume=self._toggle_power_on_on_system_resume,
-            light=self._light,
+            light=first_light,
             config=self._config,
             version_checker=self._version_checker,
             on_toggle_auto_check_update=self._toggle_auto_check_update,
             get_auto_check_update=lambda: self._config.auto_check_update,
         )
-        self._light.set_listener(self._on_state_changed)
+        if first_light:
+            first_light.set_listener(self._on_state_changed)
 
         # Initialize hotkey manager
         self._hotkey_manager = HotkeyManager(
@@ -79,20 +90,22 @@ class App:
         self._setup_hotkeys()
 
         # Initialize monitor/system power listener
-        self._monitor_sleep_listener = MonitorSleepListener(
-            on_monitor_sleep=self._on_monitor_sleep if config.device.power_off_on_monitor_sleep else None,
-            on_monitor_wake=self._on_monitor_wake if config.device.power_off_on_monitor_sleep else None,
-            on_system_suspend=self._on_system_suspend if config.device.power_off_on_system_suspend else None,
-            on_system_resume=self._on_system_resume if config.device.power_on_on_system_resume else None,
+        need_listener = any(
+            d.power_off_on_monitor_sleep or d.power_off_on_system_suspend or d.power_on_on_system_resume
+            for d in config.devices
         )
-        if (config.device.power_off_on_monitor_sleep
-                or config.device.power_off_on_system_suspend
-                or config.device.power_on_on_system_resume):
+        self._monitor_sleep_listener = MonitorSleepListener(
+            on_monitor_sleep=self._on_monitor_sleep if need_listener else None,
+            on_monitor_wake=self._on_monitor_wake if need_listener else None,
+            on_system_suspend=self._on_system_suspend if need_listener else None,
+            on_system_resume=self._on_system_resume if need_listener else None,
+        )
+        if need_listener:
             self._monitor_sleep_listener.start()
             log.info("Power state listener started")
 
-        # Track light state before monitor sleep for restoration
-        self._light_was_on_before_sleep = False
+        # Track light state before monitor sleep for restoration (per-device)
+        self._lights_state_before_sleep: dict[str, bool] = {}
 
         # Cache the imports for later use.
         self._MiMonitorLight = MiMonitorLight
@@ -113,16 +126,16 @@ class App:
         self._shutdown_listener = ShutdownListener(self._run_shutdown_power_off)
         self._shutdown_listener.start()
 
-    def _build_light(self, config: AppConfig, MiMonitorLight) -> "MiMonitorLight":
+    def _build_light(self, dev_config, MiMonitorLight) -> "MiMonitorLight":
         return MiMonitorLight(
-            ip=config.device.ip,
-            token=config.device.token,
-            model=config.device.model,
-            device_id=config.device.device_id,
-            on_ip_changed=self._on_ip_changed,
-            on_range_changed=self._on_ct_range_changed,
-            on_model_resolved=self._on_model_resolved,
-            enable_miot_for_unknown=config.device.enable_miot_for_unknown,
+            ip=dev_config.ip,
+            token=dev_config.token,
+            model=dev_config.model,
+            device_id=dev_config.device_id,
+            on_ip_changed=lambda new_ip: self._on_ip_changed(dev_config.id, new_ip),
+            on_range_changed=lambda lo, hi: self._on_ct_range_changed(dev_config.id, lo, hi),
+            on_model_resolved=lambda model: self._on_model_resolved(dev_config.id, model),
+            enable_miot_for_unknown=dev_config.enable_miot_for_unknown,
         )
 
     def run(self) -> int:
@@ -158,16 +171,25 @@ class App:
                     log.warning("Version check timed out")
             threading.Thread(target=delayed_check, daemon=True).start()
 
-        if self._config.device.power_on_at_startup:
+        # Power on devices with power_on_at_startup enabled
+        devices_to_power_on = [d for d in self._config.devices if d.power_on_at_startup]
+        if devices_to_power_on:
             import threading
             threading.Thread(target=self._startup_power_on, daemon=True).start()
-        elif not self._config.device.model or self._config.device.device_id == 0:
-            # No power-on at startup, but we still need at least one refresh so
-            # device_id and model get captured into config. Avoids the silent
-            # "I never get persisted" trap when the user leaves model="" but
-            # never opens the flyout.
-            import threading
-            threading.Thread(target=self._light.refresh, daemon=True).start()
+        else:
+            # No power-on at startup, but still refresh devices without model/device_id
+            devices_need_refresh = [
+                d for d in self._config.devices
+                if d.is_complete() and (not d.model or d.device_id == 0)
+            ]
+            if devices_need_refresh:
+                import threading
+                def refresh_all():
+                    for dev_config in devices_need_refresh:
+                        light = self._lights.get(dev_config.id)
+                        if light:
+                            light.refresh()
+                threading.Thread(target=refresh_all, daemon=True).start()
         try:
             self._flyout.run()
         finally:
@@ -180,12 +202,19 @@ class App:
 
     def _startup_power_on(self) -> None:
         """Light follows app startup — refresh, then turn on if reachable."""
-        state = self._light.refresh()
-        if state.reachable:
-            self._light.set_power(True)
-            log.info("Startup power-on sent")
-        else:
-            log.info("Skipping startup power-on: device unreachable (%s)", state.error)
+        for dev_config in self._config.devices:
+            if not dev_config.power_on_at_startup:
+                continue
+            light = self._lights.get(dev_config.id)
+            if not light:
+                continue
+            state = light.refresh()
+            if state.reachable:
+                light.set_power(True)
+                log.info("Startup power-on sent to %s", dev_config.name)
+            else:
+                log.info("Skipping startup power-on for %s: device unreachable (%s)",
+                         dev_config.name, state.error)
 
     def _run_shutdown_power_off(self) -> None:
         """Send power-off if configured. Idempotent; safe to call from any thread."""
@@ -193,75 +222,92 @@ class App:
             if self._shutdown_done:
                 return
             self._shutdown_done = True
-        if not self._config.device.power_off_at_exit:
-            return
+
         log.info("Sending shutdown power-off…")
-        try:
-            self._light.set_power(False)
-            if self._light.state.reachable:
-                log.info("Shutdown power-off acknowledged")
-            else:
-                log.warning("Shutdown power-off failed: %s", self._light.state.error)
-        except Exception:  # noqa: BLE001
-            log.exception("Shutdown power-off raised")
+        for dev_config in self._config.devices:
+            if not dev_config.power_off_at_exit:
+                continue
+            light = self._lights.get(dev_config.id)
+            if not light:
+                continue
+            try:
+                light.set_power(False)
+                if light.state.reachable:
+                    log.info("Shutdown power-off acknowledged for %s", dev_config.name)
+                else:
+                    log.warning("Shutdown power-off failed for %s: %s",
+                                dev_config.name, light.state.error)
+            except Exception:  # noqa: BLE001
+                log.exception("Shutdown power-off raised for %s", dev_config.name)
 
     def _atexit_shutdown(self) -> None:
         """Backstop for exit paths that bypass the tray menu (Ctrl+C, taskbar X)."""
         self._run_shutdown_power_off()
 
     def _toggle_power_on_at_startup(self) -> None:
-        new_value = not self._config.device.power_on_at_startup
-        self._config.device.power_on_at_startup = new_value
+        # Toggle for first device (backward compat with tray menu checkbox)
+        if not self._config.devices:
+            return
+        new_value = not self._config.devices[0].power_on_at_startup
+        self._config.devices[0].power_on_at_startup = new_value
         try:
             self._config.save()
-            log.info("power_on_at_startup toggled to %s", new_value)
+            log.info("power_on_at_startup toggled to %s for %s", new_value, self._config.devices[0].name)
         except OSError as exc:
             log.warning("Failed to save power_on_at_startup: %s", exc)
-            self._config.device.power_on_at_startup = not new_value
+            self._config.devices[0].power_on_at_startup = not new_value
 
     def _toggle_power_off_at_exit(self) -> None:
-        new_value = not self._config.device.power_off_at_exit
-        self._config.device.power_off_at_exit = new_value
+        if not self._config.devices:
+            return
+        new_value = not self._config.devices[0].power_off_at_exit
+        self._config.devices[0].power_off_at_exit = new_value
         try:
             self._config.save()
-            log.info("power_off_at_exit toggled to %s", new_value)
+            log.info("power_off_at_exit toggled to %s for %s", new_value, self._config.devices[0].name)
         except OSError as exc:
             log.warning("Failed to save power_off_at_exit: %s", exc)
-            self._config.device.power_off_at_exit = not new_value
+            self._config.devices[0].power_off_at_exit = not new_value
 
     def _toggle_power_off_on_monitor_sleep(self) -> None:
-        new_value = not self._config.device.power_off_on_monitor_sleep
-        self._config.device.power_off_on_monitor_sleep = new_value
+        if not self._config.devices:
+            return
+        new_value = not self._config.devices[0].power_off_on_monitor_sleep
+        self._config.devices[0].power_off_on_monitor_sleep = new_value
         try:
             self._config.save()
-            log.info("power_off_on_monitor_sleep toggled to %s", new_value)
+            log.info("power_off_on_monitor_sleep toggled to %s for %s", new_value, self._config.devices[0].name)
             # Restart listener with new callbacks
             self._restart_power_listener()
         except OSError as exc:
             log.warning("Failed to save power_off_on_monitor_sleep: %s", exc)
-            self._config.device.power_off_on_monitor_sleep = not new_value
+            self._config.devices[0].power_off_on_monitor_sleep = not new_value
 
     def _toggle_power_off_on_system_suspend(self) -> None:
-        new_value = not self._config.device.power_off_on_system_suspend
-        self._config.device.power_off_on_system_suspend = new_value
+        if not self._config.devices:
+            return
+        new_value = not self._config.devices[0].power_off_on_system_suspend
+        self._config.devices[0].power_off_on_system_suspend = new_value
         try:
             self._config.save()
-            log.info("power_off_on_system_suspend toggled to %s", new_value)
+            log.info("power_off_on_system_suspend toggled to %s for %s", new_value, self._config.devices[0].name)
             self._restart_power_listener()
         except OSError as exc:
             log.warning("Failed to save power_off_on_system_suspend: %s", exc)
-            self._config.device.power_off_on_system_suspend = not new_value
+            self._config.devices[0].power_off_on_system_suspend = not new_value
 
     def _toggle_power_on_on_system_resume(self) -> None:
-        new_value = not self._config.device.power_on_on_system_resume
-        self._config.device.power_on_on_system_resume = new_value
+        if not self._config.devices:
+            return
+        new_value = not self._config.devices[0].power_on_on_system_resume
+        self._config.devices[0].power_on_on_system_resume = new_value
         try:
             self._config.save()
-            log.info("power_on_on_system_resume toggled to %s", new_value)
+            log.info("power_on_on_system_resume toggled to %s for %s", new_value, self._config.devices[0].name)
             self._restart_power_listener()
         except OSError as exc:
             log.warning("Failed to save power_on_on_system_resume: %s", exc)
-            self._config.device.power_on_on_system_resume = not new_value
+            self._config.devices[0].power_on_on_system_resume = not new_value
 
     def _restart_power_listener(self) -> None:
         """Restart the monitor/system power listener with updated callbacks."""
@@ -269,58 +315,76 @@ class App:
             self._monitor_sleep_listener.stop()
 
         from .monitor_sleep_listener import MonitorSleepListener
-        self._monitor_sleep_listener = MonitorSleepListener(
-            on_monitor_sleep=self._on_monitor_sleep if self._config.device.power_off_on_monitor_sleep else None,
-            on_monitor_wake=self._on_monitor_wake if self._config.device.power_off_on_monitor_sleep else None,
-            on_system_suspend=self._on_system_suspend if self._config.device.power_off_on_system_suspend else None,
-            on_system_resume=self._on_system_resume if self._config.device.power_on_on_system_resume else None,
+
+        need_listener = any(
+            d.power_off_on_monitor_sleep or d.power_off_on_system_suspend or d.power_on_on_system_resume
+            for d in self._config.devices
         )
 
-        if (self._config.device.power_off_on_monitor_sleep
-                or self._config.device.power_off_on_system_suspend
-                or self._config.device.power_on_on_system_resume):
+        self._monitor_sleep_listener = MonitorSleepListener(
+            on_monitor_sleep=self._on_monitor_sleep if need_listener else None,
+            on_monitor_wake=self._on_monitor_wake if need_listener else None,
+            on_system_suspend=self._on_system_suspend if need_listener else None,
+            on_system_resume=self._on_system_resume if need_listener else None,
+        )
+
+        if need_listener:
             self._monitor_sleep_listener.start()
             log.info("Power state listener restarted")
 
     def _on_monitor_sleep(self) -> None:
         """Called when monitor goes to sleep."""
-        if not self._config.device.power_off_on_monitor_sleep:
-            return
-        log.info("Monitor sleep event - turning off light")
-        # Save current light state
-        state = self._light.state
-        self._light_was_on_before_sleep = state.is_on
-        # Turn off light if it's on
-        if state.is_on:
-            import threading
-            threading.Thread(target=lambda: self._light.set_power(False), daemon=True).start()
+        log.info("Monitor sleep event - turning off lights")
+        # Save current light state per device
+        self._lights_state_before_sleep = {}
+        for dev_config in self._config.devices:
+            if not dev_config.power_off_on_monitor_sleep:
+                continue
+            light = self._lights.get(dev_config.id)
+            if not light:
+                continue
+            state = light.state
+            self._lights_state_before_sleep[dev_config.id] = state.is_on
+            # Turn off light if it's on
+            if state.is_on:
+                import threading
+                threading.Thread(target=lambda l=light: l.set_power(False), daemon=True).start()
 
     def _on_monitor_wake(self) -> None:
         """Called when monitor wakes up."""
-        if not self._config.device.power_off_on_monitor_sleep:
-            return
         log.info("Monitor wake event - restoring light state")
         # Restore light state if it was on before sleep
-        if self._light_was_on_before_sleep:
-            import threading
-            threading.Thread(target=lambda: self._light.set_power(True), daemon=True).start()
-            self._light_was_on_before_sleep = False
+        for dev_config in self._config.devices:
+            if not dev_config.power_off_on_monitor_sleep:
+                continue
+            light = self._lights.get(dev_config.id)
+            if not light:
+                continue
+            if self._lights_state_before_sleep.get(dev_config.id):
+                import threading
+                threading.Thread(target=lambda l=light: l.set_power(True), daemon=True).start()
 
     def _on_system_suspend(self) -> None:
         """Called when system goes to sleep/hibernate."""
-        if not self._config.device.power_off_on_system_suspend:
-            return
-        log.info("System suspend event - turning off light")
-        import threading
-        threading.Thread(target=lambda: self._light.set_power(False), daemon=True).start()
+        log.info("System suspend event - turning off lights")
+        for dev_config in self._config.devices:
+            if not dev_config.power_off_on_system_suspend:
+                continue
+            light = self._lights.get(dev_config.id)
+            if light:
+                import threading
+                threading.Thread(target=lambda l=light: l.set_power(False), daemon=True).start()
 
     def _on_system_resume(self) -> None:
         """Called when system resumes from sleep/hibernate."""
-        if not self._config.device.power_on_on_system_resume:
-            return
-        log.info("System resume event - turning on light")
-        import threading
-        threading.Thread(target=lambda: self._light.set_power(True), daemon=True).start()
+        log.info("System resume event - turning on lights")
+        for dev_config in self._config.devices:
+            if not dev_config.power_on_on_system_resume:
+                continue
+            light = self._lights.get(dev_config.id)
+            if light:
+                import threading
+                threading.Thread(target=lambda l=light: l.set_power(True), daemon=True).start()
 
     def _toggle_auto_check_update(self) -> None:
         new_value = not self._config.auto_check_update
@@ -342,29 +406,51 @@ class App:
         self._flyout.schedule_apply_state(state)
         self._tray.set_state(state.is_on)
 
-    def _on_ip_changed(self, new_ip: str) -> None:
+    def _on_ip_changed(self, device_id: str, new_ip: str) -> None:
         """Called when auto-discovery finds the device at a new IP."""
-        log.info("Device IP changed to %s, updating config", new_ip)
-        self._config.device.ip = new_ip
+        dev_config = self._find_device_config(device_id)
+        if not dev_config:
+            return
+        log.info("Device %s IP changed to %s, updating config", dev_config.name, new_ip)
+        dev_config.ip = new_ip
         try:
             self._config.save()
         except OSError as exc:
             log.warning("Failed to save updated IP: %s", exc)
 
-    def _on_ct_range_changed(self, lo: int, hi: int) -> None:
+    def _on_ct_range_changed(self, device_id: str, lo: int, hi: int) -> None:
         """Called from a worker thread once info() resolves the model — push to UI."""
-        self._flyout.schedule_apply_ct_range(lo, hi)
+        # Only update flyout if this is the first device (backward compat)
+        if self._config.devices and device_id == self._config.devices[0].id:
+            self._flyout.schedule_apply_ct_range(lo, hi)
 
-    def _on_model_resolved(self, model: str) -> None:
+    def _on_model_resolved(self, device_id: str, model: str) -> None:
         """Persist an auto-detected model to config (worker thread)."""
-        if not model or model == self._config.device.model:
+        dev_config = self._find_device_config(device_id)
+        if not dev_config or not model or model == dev_config.model:
             return
-        log.info("Auto-detected model %s; saving to config", model)
-        self._config.device.model = model
+        log.info("Auto-detected model %s for %s; saving to config", model, dev_config.name)
+        dev_config.model = model
+
+        # Update device.id to use hardware device_id if available
+        light = self._lights.get(device_id)
+        if light and light.device_id > 0:
+            old_id = dev_config.id
+            new_id = f"{light.device_id:08x}"
+            if old_id != new_id:
+                dev_config.id = new_id
+                # Re-key in lights dict
+                self._lights[new_id] = self._lights.pop(old_id)
+                log.info("Updated device id from %s to %s", old_id, new_id)
+
         try:
             self._config.save()
         except OSError as exc:
             log.warning("Failed to save resolved model: %s", exc)
+
+    def _find_device_config(self, device_id: str):
+        """Find device config by id."""
+        return next((d for d in self._config.devices if d.id == device_id), None)
 
     def _open_settings(self) -> None:
         # Tk doesn't allow opening a second Tk root from another thread; route
@@ -382,44 +468,52 @@ class App:
         )
 
     def _on_config_saved(self, config: AppConfig) -> None:
-        log.info("Config updated; reconnecting to %s", config.device.ip)
+        log.info("Config updated; reconnecting to devices")
         self._config = config
-        self._light = self._build_light(config, self._MiMonitorLight)
-        self._light.set_listener(self._on_state_changed)
-        self._flyout._light = self._light
-        # Reset slider bounds to whatever the freshly-built light reports —
-        # info() will refine them once we reconnect, but this keeps the slider
-        # consistent if the user picked a different model in the wizard.
-        self._flyout.schedule_apply_ct_range(
-            self._light.color_temp_min, self._light.color_temp_max
-        )
-        self._tray.set_title(config.device.name or "Mi Monitor Light")
+
+        # Rebuild lights dict from new device list
+        old_lights = self._lights
+        self._lights = {}
+        for dev_config in config.devices:
+            if not dev_config.is_complete():
+                continue
+            # Reuse existing light if device_id matches (avoids reconnection)
+            existing = old_lights.get(dev_config.id)
+            if existing:
+                self._lights[dev_config.id] = existing
+            else:
+                light = self._build_light(dev_config, self._MiMonitorLight)
+                light.set_listener(self._on_state_changed)
+                self._lights[dev_config.id] = light
+
+        # Update flyout with first available light (backward compat)
+        first_light = next(iter(self._lights.values()), None)
+        self._flyout._light = first_light
+        if first_light:
+            # Reset slider bounds to whatever the freshly-built light reports —
+            # info() will refine them once we reconnect, but this keeps the slider
+            # consistent if the user picked a different model in the wizard.
+            self._flyout.schedule_apply_ct_range(
+                first_light.color_temp_min, first_light.color_temp_max
+            )
+
+        # Update tray
+        self._tray.set_title("Mi Monitor Light")
+        if first_light:
+            self._tray._light = first_light
+
         # Update hotkeys
         self._setup_hotkeys()
         # Update monitor/system power listener
         self._restart_power_listener()
-        # Trigger a refresh to capture device_id and/or model if missing —
-        # _on_model_resolved handles model persistence; we still need this
-        # thread to backfill device_id, which has no listener.
-        if config.device.device_id == 0 or not config.device.model:
-            import threading
-            threading.Thread(target=self._initial_refresh, daemon=True).start()
 
-    def _initial_refresh(self) -> None:
-        """Refresh device state and save device_id to config if newly captured.
-
-        Model persistence is handled by ``_on_model_resolved`` (fired from
-        within the light's _record_success when auto-detect runs); this method
-        only covers device_id, which has no callback hook.
-        """
-        self._light.refresh()
-        if self._light.device_id > 0 and self._config.device.device_id == 0:
-            self._config.device.device_id = self._light.device_id
-            try:
-                self._config.save()
-                log.info("Saved device_id %08x to config", self._light.device_id)
-            except OSError as exc:
-                log.warning("Failed to save device_id: %s", exc)
+        # Trigger a refresh to capture device_id and/or model if missing
+        for dev_config in config.devices:
+            if dev_config.device_id == 0 or not dev_config.model:
+                light = self._lights.get(dev_config.id)
+                if light:
+                    import threading
+                    threading.Thread(target=light.refresh, daemon=True).start()
 
     def _on_exit(self) -> None:
         self._flyout.shutdown()
@@ -473,57 +567,62 @@ class App:
 
     def _on_hotkey_brightness_up(self) -> None:
         """Hotkey callback: increase brightness."""
-        state = self._light.state
-        if not state.reachable:
-            return
-        current = state.brightness or 50
         step = self._config.hotkey.step
-        new_value = min(100, current + step)
-        # Direct call - set_brightness is already immediate
-        self._light.set_brightness(new_value)
-        log.debug("Hotkey: brightness %d -> %d", current, new_value)
+        for light in self._lights.values():
+            state = light.state
+            if not state.reachable:
+                continue
+            current = state.brightness or 50
+            new_value = min(100, current + step)
+            # Run in thread to avoid blocking
+            import threading
+            threading.Thread(target=lambda l=light, v=new_value: l.set_brightness(v), daemon=True).start()
+            log.debug("Hotkey: brightness %d -> %d", current, new_value)
 
     def _on_hotkey_brightness_down(self) -> None:
         """Hotkey callback: decrease brightness."""
-        state = self._light.state
-        if not state.reachable:
-            return
-        current = state.brightness or 50
         step = self._config.hotkey.step
-        new_value = max(1, current - step)
-        # Direct call - set_brightness is already immediate
-        self._light.set_brightness(new_value)
-        log.debug("Hotkey: brightness %d -> %d", current, new_value)
+        for light in self._lights.values():
+            state = light.state
+            if not state.reachable:
+                continue
+            current = state.brightness or 50
+            new_value = max(1, current - step)
+            import threading
+            threading.Thread(target=lambda l=light, v=new_value: l.set_brightness(v), daemon=True).start()
+            log.debug("Hotkey: brightness %d -> %d", current, new_value)
 
     def _on_hotkey_color_temp_up(self) -> None:
         """Hotkey callback: increase color temperature (cooler)."""
-        state = self._light.state
-        if not state.reachable:
-            return
-        current = state.color_temp or 4000
         step = self._config.hotkey.step
-        # Scale step based on color temp range
-        ct_range = self._light.color_temp_max - self._light.color_temp_min
-        actual_step = int(ct_range * step / 100)  # step as percentage
-        new_value = min(self._light.color_temp_max, current + actual_step)
-        # Direct call - set_color_temp is already immediate
-        self._light.set_color_temp(new_value)
-        log.debug("Hotkey: color temp %d -> %d", current, new_value)
+        for light in self._lights.values():
+            state = light.state
+            if not state.reachable:
+                continue
+            current = state.color_temp or 4000
+            # Scale step based on color temp range
+            ct_range = light.color_temp_max - light.color_temp_min
+            actual_step = int(ct_range * step / 100)  # step as percentage
+            new_value = min(light.color_temp_max, current + actual_step)
+            import threading
+            threading.Thread(target=lambda l=light, v=new_value: l.set_color_temp(v), daemon=True).start()
+            log.debug("Hotkey: color temp %d -> %d", current, new_value)
 
     def _on_hotkey_color_temp_down(self) -> None:
         """Hotkey callback: decrease color temperature (warmer)."""
-        state = self._light.state
-        if not state.reachable:
-            return
-        current = state.color_temp or 4000
         step = self._config.hotkey.step
-        # Scale step based on color temp range
-        ct_range = self._light.color_temp_max - self._light.color_temp_min
-        actual_step = int(ct_range * step / 100)  # step as percentage
-        new_value = max(self._light.color_temp_min, current - actual_step)
-        # Direct call - set_color_temp is already immediate
-        self._light.set_color_temp(new_value)
-        log.debug("Hotkey: color temp %d -> %d", current, new_value)
+        for light in self._lights.values():
+            state = light.state
+            if not state.reachable:
+                continue
+            current = state.color_temp or 4000
+            # Scale step based on color temp range
+            ct_range = light.color_temp_max - light.color_temp_min
+            actual_step = int(ct_range * step / 100)  # step as percentage
+            new_value = max(light.color_temp_min, current - actual_step)
+            import threading
+            threading.Thread(target=lambda l=light, v=new_value: l.set_color_temp(v), daemon=True).start()
+            log.debug("Hotkey: color temp %d -> %d", current, new_value)
 
 
 def _run_setup_only(config: AppConfig) -> int:
@@ -580,12 +679,13 @@ def main(argv: list[str] | None = None) -> int:
 
     config = AppConfig.load()
 
-    if args.setup or not config.device.is_complete():
+    # Open wizard if no devices configured OR if --setup flag passed
+    if args.setup or not config.devices or not any(d.is_complete() for d in config.devices):
         rc = _run_setup_only(config)
         if rc != 0:
             return rc
         config = AppConfig.load()
-        if not config.device.is_complete():
+        if not config.devices or not any(d.is_complete() for d in config.devices):
             log.error("Setup not completed; exiting.")
             return 1
 
