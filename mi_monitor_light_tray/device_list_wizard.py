@@ -147,6 +147,34 @@ class DeviceListWizard:
                         variable=self._autostart_var,
                         command=_toggle_autostart).pack(anchor="w", pady=(0, 12))
 
+        # ── About Section ──────────────────────────────────────────────────
+        about_frame = ttk.Frame(main_container)
+        about_frame.pack(fill="x", pady=(8, 12))
+
+        ttk.Label(
+            about_frame,
+            text="关于",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            foreground="#1a1a1a"
+        ).pack(anchor="w", pady=(0, 8))
+
+        btn_frame = ttk.Frame(about_frame)
+        btn_frame.pack(anchor="w")
+
+        ttk.Button(
+            btn_frame,
+            text="检查更新",
+            command=self._on_check_update,
+            style="TButton"
+        ).pack(side="left", padx=(0, 8))
+
+        ttk.Button(
+            btn_frame,
+            text="访问 GitHub 主页",
+            command=self._on_open_github,
+            style="TButton"
+        ).pack(side="left")
+
         # ── Footer Buttons ─────────────────────────────────────────────────
         btn_row = ttk.Frame(main_container)
         btn_row.pack(fill="x", pady=(12, 0))
@@ -343,10 +371,56 @@ class DeviceListWizard:
         self._drag_source_index = index
         self._drag_start_y = event.y_root
 
+        # Create drag preview window
+        self._create_drag_preview(index)
+
+    def _create_drag_preview(self, index: int) -> None:
+        """Create a floating preview window for the dragged card."""
+        device = self._config.devices[index]
+
+        # Create a toplevel window for drag preview
+        self._drag_preview = tk.Toplevel(self._root)
+        self._drag_preview.overrideredirect(True)
+        self._drag_preview.attributes("-alpha", 0.7)
+        self._drag_preview.attributes("-topmost", True)
+
+        # Build preview card
+        card = tk.Frame(self._drag_preview, relief="solid", borderwidth=2,
+                        bg="#e3f2fd", bd=2)
+        card.pack(fill="both", expand=True)
+
+        # Just show basic info
+        info_frame = tk.Frame(card, bg="#e3f2fd")
+        info_frame.pack(padx=16, pady=12)
+
+        tk.Label(
+            info_frame,
+            text=device.name or "未命名设备",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            foreground="#1a1a1a",
+            bg="#e3f2fd"
+        ).pack(anchor="w")
+
+        tk.Label(
+            info_frame,
+            text=f"IP: {device.ip}",
+            font=("Microsoft YaHei UI", 9),
+            foreground="#666666",
+            bg="#e3f2fd"
+        ).pack(anchor="w")
+
+        # Position will be updated in _on_drag_motion
+        self._drag_preview.withdraw()
+
     def _on_drag_motion(self, event) -> None:
-        """Handle drag motion - determine target position."""
+        """Handle drag motion - update preview position and highlight target."""
         if not hasattr(self, "_drag_source_index"):
             return
+
+        # Update drag preview position
+        if hasattr(self, "_drag_preview") and self._drag_preview.winfo_exists():
+            self._drag_preview.deiconify()
+            self._drag_preview.geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
 
         # Find which card the cursor is currently over
         target_index = self._find_card_at_y(event.y_root)
@@ -363,6 +437,11 @@ class DeviceListWizard:
 
         source = self._drag_source_index
         target = self._find_card_at_y(event.y_root)
+
+        # Destroy drag preview
+        if hasattr(self, "_drag_preview") and self._drag_preview.winfo_exists():
+            self._drag_preview.destroy()
+            del self._drag_preview
 
         # Clear drag state
         del self._drag_source_index
@@ -482,6 +561,16 @@ class DeviceListWizard:
             self._close()
         except OSError as exc:
             messagebox.showerror("保存失败", str(exc), parent=self._root)
+
+    def _on_check_update(self) -> None:
+        """Check for updates."""
+        import webbrowser
+        webbrowser.open("https://github.com/Martlnez/MiMonitorLightTray/releases/latest")
+
+    def _on_open_github(self) -> None:
+        """Open GitHub repository."""
+        import webbrowser
+        webbrowser.open("https://github.com/Martlnez/MiMonitorLightTray")
 
     def _close(self) -> None:
         """Close the wizard."""
