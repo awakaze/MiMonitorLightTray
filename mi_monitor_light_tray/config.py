@@ -46,6 +46,12 @@ class DeviceConfig:
     power_off_on_system_suspend: bool = False
     # Power the light on when system resumes from sleep/hibernate.
     power_on_on_system_resume: bool = False
+    # Per-device hotkey settings
+    brightness_up: str = ""  # 亮度增加快捷键，如 "ctrl+alt+up"
+    brightness_down: str = ""  # 亮度降低快捷键，如 "ctrl+alt+down"
+    color_temp_up: str = ""  # 色温增加快捷键，如 "ctrl+alt+right"
+    color_temp_down: str = ""  # 色温降低快捷键，如 "ctrl+alt+left"
+    hotkey_step: int = 5  # 每次调整的步进值（亮度：1-100，色温按比例）
 
     def is_complete(self) -> bool:
         return bool(self.ip) and bool(self.token) and len(self.token) == 32

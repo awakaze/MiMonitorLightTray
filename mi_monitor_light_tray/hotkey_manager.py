@@ -78,6 +78,7 @@ class HotkeyManager:
         on_color_temp_up: Optional[Callable[[], None]] = None,
         on_color_temp_down: Optional[Callable[[], None]] = None,
     ) -> None:
+        # Legacy callbacks for backward compatibility
         self._callbacks = {
             1: on_brightness_up,
             2: on_brightness_down,
@@ -87,31 +88,27 @@ class HotkeyManager:
         self._thread: Optional[threading.Thread] = None
         self._thread_id: int = 0
         self._running = False
+        self._hotkeys_to_register = []  # List of (id, hotkey_str)
 
         # Auto-repeat acceleration tracking
         self._repeat_count = {}  # hotkey_id -> count
         self._last_trigger = {}  # hotkey_id -> timestamp
 
-    def set_hotkeys(
-        self,
-        brightness_up: str = "",
-        brightness_down: str = "",
-        color_temp_up: str = "",
-        color_temp_down: str = "",
-    ) -> None:
-        """Set hotkey combinations and restart listener."""
-        self.stop()
+    def set_callbacks(self, callbacks: dict[int, Callable[[], None]]) -> None:
+        """Set hotkey callbacks dynamically."""
+        self._callbacks = callbacks
 
-        hotkeys = [
-            (1, brightness_up),
-            (2, brightness_down),
-            (3, color_temp_up),
-            (4, color_temp_down),
-        ]
+    def register_hotkey(self, hotkey_id: int, hotkey_str: str) -> None:
+        """Register a hotkey to be activated when start() is called."""
+        self._hotkeys_to_register.append((hotkey_id, hotkey_str))
+
+    def start(self) -> None:
+        """Start the hotkey listener with registered hotkeys."""
+        self.stop()
 
         # Parse and validate hotkeys
         parsed = []
-        for hotkey_id, hotkey_str in hotkeys:
+        for hotkey_id, hotkey_str in self._hotkeys_to_register:
             if not hotkey_str.strip():
                 continue
             try:
@@ -136,6 +133,22 @@ class HotkeyManager:
             name="hotkey-listener"
         )
         self._thread.start()
+
+    def set_hotkeys(
+        self,
+        brightness_up: str = "",
+        brightness_down: str = "",
+        color_temp_up: str = "",
+        color_temp_down: str = "",
+    ) -> None:
+        """Legacy method for setting hotkeys (backward compatibility)."""
+        self._hotkeys_to_register = [
+            (1, brightness_up),
+            (2, brightness_down),
+            (3, color_temp_up),
+            (4, color_temp_down),
+        ]
+        self.start()
 
     def _parse_hotkey(self, hotkey: str) -> tuple[int, int]:
         """Parse hotkey string to modifiers and virtual key code."""

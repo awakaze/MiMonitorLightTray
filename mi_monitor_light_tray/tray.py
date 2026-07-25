@@ -95,31 +95,6 @@ class TrayController:
                 self._handle_toggle_autostart,
                 checked=lambda _i: autostart.is_enabled(),
             ),
-            MenuItem(
-                "灯跟随软件启动",
-                self._handle_toggle_power_on_at_startup,
-                checked=lambda _i: self._get_power_on_at_startup(),
-            ),
-            MenuItem(
-                "灯跟随软件关闭",
-                self._handle_toggle_power_off_at_exit,
-                checked=lambda _i: self._get_power_off_at_exit(),
-            ),
-            MenuItem(
-                "灯随显示器休眠开关",
-                self._handle_toggle_power_off_on_monitor_sleep,
-                checked=lambda _i: self._get_power_off_on_monitor_sleep(),
-            ),
-            MenuItem(
-                "系统休眠时关灯",
-                self._handle_toggle_power_off_on_system_suspend,
-                checked=lambda _i: self._get_power_off_on_system_suspend(),
-            ),
-            MenuItem(
-                "系统唤醒时开灯",
-                self._handle_toggle_power_on_on_system_resume,
-                checked=lambda _i: self._get_power_on_on_system_resume(),
-            ),
             Menu.SEPARATOR,
             MenuItem(
                 "固定在桌面上",
