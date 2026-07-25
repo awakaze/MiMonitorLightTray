@@ -55,6 +55,9 @@ class App:
         self._version_checker = VersionChecker()
         self._update_available = False
 
+        # Get first light for backward compatibility with TrayController
+        first_light = next(iter(self._lights.values()), None)
+
         self._tray = TrayController(
             title="Mi Monitor Light",
             on_left_click=self._on_tray_click,
