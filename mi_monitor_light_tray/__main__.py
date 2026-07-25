@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 from tkinter import messagebox
 
 from .config import AppConfig
@@ -83,13 +84,8 @@ class App:
         for dev_id, light in self._lights.items():
             light.set_listener(lambda state, did=dev_id: self._on_state_changed(state, did))
 
-        # Initialize hotkey manager
-        self._hotkey_manager = HotkeyManager(
-            on_brightness_up=self._on_hotkey_brightness_up,
-            on_brightness_down=self._on_hotkey_brightness_down,
-            on_color_temp_up=self._on_hotkey_color_temp_up,
-            on_color_temp_down=self._on_hotkey_color_temp_down,
-        )
+        # Initialize hotkey manager (no callbacks in constructor - will be set dynamically)
+        self._hotkey_manager = HotkeyManager()
         self._setup_hotkeys()
 
         # Initialize monitor/system power listener
@@ -563,6 +559,9 @@ class App:
     def _setup_hotkeys(self) -> None:
         """Configure hotkeys for all devices."""
         try:
+            # Clear previous registrations
+            self._hotkey_manager._hotkeys_to_register = []
+
             # Collect all hotkey configurations from devices
             hotkey_id = 1
             callbacks = {}
@@ -604,31 +603,47 @@ class App:
 
     def _on_device_brightness_up(self, light, step: int) -> None:
         """Hotkey callback: increase brightness for specific device."""
-        threading.Thread(
-            target=lambda: light.adjust_brightness(step),
-            daemon=True
-        ).start()
+        def _do():
+            if not light.state.reachable:
+                return
+            current = light.state.brightness or 50
+            new_value = min(100, current + step)
+            light.set_brightness(new_value)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_device_brightness_down(self, light, step: int) -> None:
         """Hotkey callback: decrease brightness for specific device."""
-        threading.Thread(
-            target=lambda: light.adjust_brightness(-step),
-            daemon=True
-        ).start()
+        def _do():
+            if not light.state.reachable:
+                return
+            current = light.state.brightness or 50
+            new_value = max(1, current - step)
+            light.set_brightness(new_value)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_device_color_temp_up(self, light, step: int) -> None:
         """Hotkey callback: increase color temp for specific device."""
-        threading.Thread(
-            target=lambda: light.adjust_color_temp(step),
-            daemon=True
-        ).start()
+        def _do():
+            if not light.state.reachable:
+                return
+            current = light.state.color_temp or 4000
+            ct_range = light.color_temp_max - light.color_temp_min
+            actual_step = int(ct_range * step / 100)
+            new_value = min(light.color_temp_max, current + actual_step)
+            light.set_color_temp(new_value)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _on_device_color_temp_down(self, light, step: int) -> None:
         """Hotkey callback: decrease color temp for specific device."""
-        threading.Thread(
-            target=lambda: light.adjust_color_temp(-step),
-            daemon=True
-        ).start()
+        def _do():
+            if not light.state.reachable:
+                return
+            current = light.state.color_temp or 4000
+            ct_range = light.color_temp_max - light.color_temp_min
+            actual_step = int(ct_range * step / 100)
+            new_value = max(light.color_temp_min, current - actual_step)
+            light.set_color_temp(new_value)
+        threading.Thread(target=_do, daemon=True).start()
 
 
 
