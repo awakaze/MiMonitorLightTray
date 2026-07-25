@@ -48,9 +48,8 @@ class App:
                 light = self._build_light(dev_config, MiMonitorLight)
                 self._lights[dev_config.id] = light
 
-        # Pass first available light to flyout for backward compat during migration
-        first_light = next(iter(self._lights.values()), None)
-        self._flyout = FlyoutWindow(first_light, on_open_setup=self._open_settings)
+        # Pass all lights and config to flyout for multi-device support
+        self._flyout = FlyoutWindow(self._lights, config, on_open_setup=self._open_settings)
 
         # Initialize version checker
         self._version_checker = VersionChecker()
@@ -77,8 +76,9 @@ class App:
             on_toggle_auto_check_update=self._toggle_auto_check_update,
             get_auto_check_update=lambda: self._config.auto_check_update,
         )
-        if first_light:
-            first_light.set_listener(self._on_state_changed)
+        # Set up state listeners for all lights
+        for dev_id, light in self._lights.items():
+            light.set_listener(lambda state, did=dev_id: self._on_state_changed(state, did))
 
         # Initialize hotkey manager
         self._hotkey_manager = HotkeyManager(
@@ -401,10 +401,15 @@ class App:
     def _on_tray_click(self, x: int, y: int) -> None:
         self._flyout.schedule_open(x, y)
 
-    def _on_state_changed(self, state: "LightState") -> None:
+    def _on_state_changed(self, state: "LightState", device_id: str) -> None:
         # Called from worker threads — marshal to Tk thread.
-        self._flyout.schedule_apply_state(state)
-        self._tray.set_state(state.is_on)
+        # Only update flyout if this is the active device or in ALL mode
+        if self._config.active_device_id == "ALL" or self._config.active_device_id == device_id:
+            self._flyout.schedule_apply_state(state)
+
+        # Update tray with aggregate status
+        any_on = any(l.state.is_on for l in self._lights.values() if l.state.reachable)
+        self._tray.set_state(any_on)
 
     def _on_ip_changed(self, device_id: str, new_ip: str) -> None:
         """Called when auto-discovery finds the device at a new IP."""

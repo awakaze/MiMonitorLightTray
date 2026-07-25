@@ -355,6 +355,11 @@ class SetupWizard:
             import uuid
             id_to_use = f"temp_{uuid.uuid4().hex[:8]}"
 
+        # If we have a hardware device_id from test, upgrade temp_xxx to hardware ID
+        if device_id_to_use > 0 and id_to_use.startswith("temp_"):
+            id_to_use = f"{device_id_to_use:08x}"
+            log.info("Upgrading device id from temp to hardware: %s", id_to_use)
+
         return DeviceConfig(
             id=id_to_use,
             ip=self._ip_var.get().strip(),
@@ -430,6 +435,36 @@ class SetupWizard:
             messagebox.showerror("保存失败", str(exc),
                                  parent=self._root)
             return
+
+        # Ask if user wants to add more devices
+        if len(self._config.devices) >= 1:
+            result = messagebox.askyesno(
+                "保存成功",
+                f"设备「{dev.name}」已保存！\n\n是否继续添加更多设备？",
+                parent=self._root
+            )
+            if result:
+                # Add the new device and reset form for next device
+                import uuid
+                new_device = DeviceConfig(
+                    id=f"temp_{uuid.uuid4().hex[:8]}",
+                    ip="",
+                    token="",
+                    name="",
+                    model="",
+                    device_id=0,
+                )
+                self._config.devices.append(new_device)
+                # Reset form fields
+                self._ip_var.set("")
+                self._token_var.set("")
+                self._name_var.set("显示器挂灯")
+                self._model_var.set("")
+                self._tested_device_id = 0
+                self._status_var.set("请输入下一个设备信息")
+                # Don't close, let user add more
+                return
+
         self._on_saved(self._config)
         self._close()
 

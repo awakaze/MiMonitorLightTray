@@ -233,6 +233,11 @@ class DeviceEditorDialog:
         device_id_to_use = self._tested_device_id or self._device.device_id
         id_to_use = self._device.id if self._device.id else f"temp_{uuid.uuid4().hex[:8]}"
 
+        # If we have a hardware device_id from test, upgrade temp_xxx to hardware ID
+        if device_id_to_use > 0 and id_to_use.startswith("temp_"):
+            id_to_use = f"{device_id_to_use:08x}"
+            log.info("Upgrading device id from temp to hardware: %s", id_to_use)
+
         return DeviceConfig(
             id=id_to_use,
             ip=self._ip_var.get().strip(),
