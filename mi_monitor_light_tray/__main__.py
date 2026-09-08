@@ -170,23 +170,12 @@ class App:
                     log.warning("Version check timed out")
             threading.Thread(target=delayed_check, daemon=True).start()
 
-        # Power on devices with power_on_at_startup enabled
-        devices_to_power_on = [d for d in self._config.devices if d.power_on_at_startup]
-        if devices_to_power_on:
-            import threading
-            threading.Thread(target=self._startup_power_on, daemon=True).start()
-
-        # Always refresh every complete device in parallel so the tray icon
-        # settles to the real aggregate on/off state right after boot.
-        # Devices in the startup power-on set already get refreshed there.
-        power_on_ids = {d.id for d in devices_to_power_on}
-        import threading
-        for dev_config in self._config.devices:
-            if not dev_config.is_complete() or dev_config.id in power_on_ids:
-                continue
-            light = self._lights.get(dev_config.id)
-            if light:
-                threading.Thread(target=light.refresh, daemon=True).start()
+        # Startup refresh with compensated retry rounds — mirrors system wake.
+        # Boot-time NIC/dock readiness is unreliable, so a single t+0 refresh
+        # often reports unreachable and the cache then stays "offline" until the
+        # user next opens the flyout. Re-probe at +3s/+8s like _on_system_resume
+        # so the very first open shows a fresh status instead of a stale cache.
+        self._startup_refresh()
         try:
             self._flyout.run()
         finally:
@@ -197,21 +186,58 @@ class App:
             self._tray.stop()
         return 0
 
-    def _startup_power_on(self) -> None:
-        """Light follows app startup — refresh, then turn on if reachable."""
-        for dev_config in self._config.devices:
-            if not dev_config.power_on_at_startup:
-                continue
-            light = self._lights.get(dev_config.id)
-            if not light:
-                continue
-            state = light.refresh()
-            if state.reachable:
+    def _startup_refresh(self) -> None:
+        """Boot-time compensated refresh — mirrors the system-wake retry rounds.
+
+        Boot-NIC/dock readiness is unreliable (same reason _on_system_resume
+        runs three staggered rounds). A single t+0 refresh often fails and, on
+        plain boot, nothing ever retries — the cache stays "offline" until the
+        user next opens the flyout. Firing three rounds at +0s/+3s/+8s (like
+        _on_system_resume) keeps the first open showing fresh state centered
+        on the real aggregate on/off.
+        """
+        import threading
+        import time
+
+        def _round_once() -> None:
+            for dev_config in self._config.devices:
+                if not dev_config.is_complete():
+                    continue
+                light = self._lights.get(dev_config.id)
+                if not light:
+                    continue
+                if dev_config.power_on_at_startup:
+                    # Startup power-on: re-arms every round so a late-ready NIC
+                    # still gets the light switched on once it becomes reachable.
+                    threading.Thread(
+                        target=self._startup_power_on_one,
+                        args=(dev_config, light),
+                        daemon=True,
+                    ).start()
+                else:
+                    threading.Thread(target=light.refresh, daemon=True).start()
+
+        _round_once()
+
+        def _delayed(delay: float) -> None:
+            time.sleep(delay)
+            _round_once()
+
+        threading.Thread(target=lambda: _delayed(3.0), daemon=True).start()
+        threading.Thread(target=lambda: _delayed(8.0), daemon=True).start()
+
+    def _startup_power_on_one(self, dev_config: "DeviceConfig",
+                              light: "MiMonitorLight") -> None:
+        """Turn one device on at boot: refresh, then enable only if reachable
+        and not already on (avoids re-sending each round once it's lit)."""
+        state = light.refresh()
+        if state.reachable:
+            if not state.is_on:
                 light.set_power(True)
                 log.info("Startup power-on sent to %s", dev_config.name)
-            else:
-                log.info("Skipping startup power-on for %s: device unreachable (%s)",
-                         dev_config.name, state.error)
+        else:
+            log.info("Skipping startup power-on for %s: device unreachable (%s)",
+                     dev_config.name, state.error)
 
     def _run_shutdown_power_off(self) -> None:
         """Send power-off if configured. Idempotent; safe to call from any thread."""
