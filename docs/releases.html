@@ -41,8 +41,36 @@
 
 <article class="release release-latest">
     <div class="release-header">
-        <h2>v1.5.2 · 稳定性修复 &amp; 账号迁移</h2>
+        <h2>v1.5.3 · 开机补偿刷新</h2>
         <span class="release-tag">● 当前版本</span>
+    </div>
+    <p class="release-date">2026-09 发布</p>
+    <div class="release-body">
+        <p>解决<strong>普通开机</strong>（区别于休眠唤醒）后的体验问题：开机时首次刷新若因网卡/扩展坞未就绪而失败，程序此前不会自动重试，状态一直停在"离线"，直到用户再次点开托盘才重新连接。本次仿照 v1.5.1 的唤醒刷新机制，给普通开机也加上补偿轮次。</p>
+
+        <h3>✨ 开机补偿刷新（三轮重试）</h3>
+        <ul>
+            <li><strong>开机对全部设备做三轮刷新（t+0s / +3s / +8s）</strong> — 覆盖开机瞬间 WiFi / 扩展坞网卡晚就绪的平均 1~3s 延迟，首轮失败不再"一锤定音"，首次打开托盘看到的就是实时状态</li>
+            <li><strong>开机自启开灯改为并行 + 逐轮重试</strong> — 原为串行处理，一台设备 UDP 超时会拖慢整体；改每台设备独立线程并行，且每一轮都会补开灯，不再"失败一次就放弃"</li>
+        </ul>
+
+        <h3>🧹 其它</h3>
+        <ul>
+            <li>点击托盘（Flyout）保持<strong>先显示缓存 + 后台静默并行刷新</strong>，弹窗秒开、刷新自动校正</li>
+        </ul>
+    </div>
+    <div class="release-actions">
+        <a class="btn btn-primary btn-sm" data-download href="https://github.com/awakaze/MiMonitorLightTray/releases/latest" target="_blank" rel="noopener">下载 EXE</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/releases/tag/v1.5.3" target="_blank" rel="noopener">GitHub Release</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/compare/v1.5.2...v1.5.3" target="_blank" rel="noopener">Compare</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/blob/main/release-notes/RELEASE_NOTES_v1.5.3.md" target="_blank" rel="noopener">Markdown 原文</a>
+    </div>
+</article>
+
+<article class="release">
+    <div class="release-header">
+        <h2>v1.5.2 · 稳定性修复 &amp; 账号迁移</h2>
+        <span class="release-tag" style="background: var(--bg-tertiary); color: var(--text-muted);">2026-09</span>
     </div>
     <p class="release-date">2026-09 发布</p>
     <div class="release-body">
@@ -68,7 +96,6 @@
         </ul>
     </div>
     <div class="release-actions">
-        <a class="btn btn-primary btn-sm" data-download href="https://github.com/awakaze/MiMonitorLightTray/releases/latest" target="_blank" rel="noopener">下载 EXE</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/releases/tag/v1.5.2" target="_blank" rel="noopener">GitHub Release</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/compare/v1.5.1...v1.5.2" target="_blank" rel="noopener">Compare</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/blob/main/release-notes/RELEASE_NOTES_v1.5.2.md" target="_blank" rel="noopener">Markdown 原文</a>
