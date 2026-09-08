@@ -123,10 +123,12 @@ docs:      v1.5.1 release notes + releases.html 置顶
 
 ### 5.3 编译（本地出 EXE 给用户测试）
 ```powershell
-pip install -e ".[build]"          # 首次装 PyInstaller
-python scripts/build_exe.py        # 产出 dist/MiMonitorLightTray.exe
+cd C:\tool\MiMonitorLightTray
+.venv\Scripts\python.exe scripts\build_exe.py     # 产出 dist\MiMonitorLightTray.exe
 ```
-注意：`build_exe.py` 第一步会跑 `pip install -e . --no-deps` 同步版本号 metadata。Sandbox 环境下这一步可能因写全局 site-packages 被拦截，但只要 PyInstaller 本身跑通（Building EXE completed successfully）、`Get-Item dist\MiMonitorLightTray.exe` 时间戳是刚更新的就算成功。沙箱拦截不影响 EXE 内容。
+- **版本号**：修改 `pyproject.toml` 的 `version`（唯一真源）。测试编译可暂不改版本；仅发版时才 bump。
+- 首次装 PyInstaller（若 .venv 里没有）：`.venv\Scripts\python.exe -m pip install -e ".[build]"`
+- `build_exe.py` 第一步会跑 `pip install -e . --no-deps` 同步版本号 metadata（装进 .venv，不会碰全局环境）。
 
 ---
 
