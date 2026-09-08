@@ -175,7 +175,7 @@ class _DeviceSection:
         tk.Label(header, textvariable=self._status_var,
                  fg=self.MUTED, bg=self.BG,
                  font=("Microsoft YaHei UI", 9),
-                 anchor="w").grid(row=0, column=1, sticky="w", padx=(8, 0))
+                 anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 6))
 
         power_btn = tk.Label(header, text="⏻", fg=self.MUTED, bg=self.BG,
                              font=("Segoe UI Symbol", 13),
