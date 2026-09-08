@@ -289,7 +289,11 @@ def test_stop_joins_window_thread_before_returning(_shim_ctypes_windows):
     # Import must happen AFTER the ctypes shim is installed by the fixture.
     from mi_monitor_light_tray.monitor_sleep_listener import MonitorSleepListener
 
-    teardown_sleep = 0.06  # 60ms — observable real-world cleanup window.
+    # Keep the teardown window large (500ms) so scheduling jitter and
+    # time.sleep() accuracy relative to it stay negligible. A 60ms window with
+    # a 10ms tolerance was flaky on Python 3.12 CI (sleep under-ran slightly →
+    # stop() returned 47ms vs the ≥50ms assert).
+    teardown_sleep = 0.5  # 500ms teardown window simulated in _pump.
     unblock = threading.Event()
 
     class _Stub(MonitorSleepListener):
@@ -337,8 +341,10 @@ def test_stop_joins_window_thread_before_returning(_shim_ctypes_windows):
     stub.stop()
     elapsed = time.monotonic() - t0
 
-    # stop() must have blocked until at *least* the 60ms teardown finished.
-    assert elapsed >= teardown_sleep - 0.01, (
+    # stop() must have blocked until the teardown basically finished. Allow up
+    # to 30% jitter around the simulated window; is_alive below is the hard
+    # guarantee that the window thread fully exited on return.
+    assert elapsed >= teardown_sleep * 0.7, (
         f"stop() returned after {elapsed*1000:.0f}ms. Thread teardown takes "
         f"{teardown_sleep*1000:.0f}ms, so stop() cannot possibly have waited "
         f"for the window thread to exit — old listener is still alive and "
