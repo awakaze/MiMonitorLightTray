@@ -9,6 +9,7 @@ and the right backend should be selected per model id.
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -122,6 +123,26 @@ def test_refresh_offline_returns_state(fake_yeelight):
     state = light.refresh()
     assert state.reachable is False
     assert state.error == "noop"
+
+
+def test_refresh_does_not_clobber_recent_local_brightness(fake_yeelight):
+    """迟到的旧读取不得覆盖用户刚手动调的亮度（local-write guard）。"""
+    light, dev = _make_legacy(
+        fake_yeelight,
+        status=SimpleNamespace(is_on=True, brightness=10, color_temp=4000),
+    )
+    light.state.is_on = True  # 避免 set_brightness 触发 aux 点亮线程，保持确定性
+    light.set_brightness(80)
+    assert light.state.brightness == 80
+
+    # 一次滞后于手动调整的旧读取：设备仍报旧亮度 10
+    light.refresh()
+    assert light.state.brightness == 80  # 不被旧返回覆盖
+    assert light.state.is_on is True
+
+    # 下一次 refresh 恢复正常：按设备真实状态校正
+    light.refresh()
+    assert light.state.brightness == 10
 
 
 def test_lock_serialises_calls(fake_yeelight):
@@ -323,8 +344,8 @@ def test_miot_set_brightness_captures_device_exception(fake_miot):
 # ── auto-on (light powers on when the user drags a slider while off) ──────────
 
 
-def test_set_brightness_auto_powers_on_when_off(fake_yeelight):
-    """When state.is_on is False, set_brightness must call on() before set_brightness."""
+def test_set_brightness_auto_powers_on_when_off(fake_yeelight, monkeypatch):
+    """缓存关时调亮度要触发自动点亮（aux 并发），且亮度不被旧返回覆盖。"""
     device = MagicMock()
     device.on = MagicMock(return_value=None)
     device.set_brightness = MagicMock(return_value=None)
@@ -332,12 +353,20 @@ def test_set_brightness_auto_powers_on_when_off(fake_yeelight):
     light = miio_client.MiMonitorLight(
         ip="1.2.3.4", token="t" * 32, model=LEGACY_MODEL
     )
-    # Cached state defaults to is_on=False
     assert light.state.is_on is False
+    fired = {}
+    monkeypatch.setattr(light, "_aux_power_on", lambda: fired.setdefault("fired", True))
     light.set_brightness(40)
-    device.on.assert_called_once()
+    # 自动点亮路径确实被触发（即使它是并发的）
+    import time as _t
+    deadline = _t.time() + 1.0
+    while not fired.get("fired") and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert fired.get("fired") is True
     device.set_brightness.assert_called_once_with(40)
+    # 防护：is_on/brightness 由 set_brightness 直接写入，不被旧返回覆盖
     assert light.state.is_on is True
+    assert light.state.brightness == 40
 
 
 def test_set_brightness_does_not_call_on_when_already_on(fake_yeelight):
@@ -354,34 +383,41 @@ def test_set_brightness_does_not_call_on_when_already_on(fake_yeelight):
     device.set_brightness.assert_called_once_with(40)
 
 
-def test_set_color_temp_auto_powers_on_when_off(fake_yeelight):
+def test_set_color_temp_auto_powers_on_when_off(fake_yeelight, monkeypatch):
     device = MagicMock()
-    device.on = MagicMock(return_value=None)
     device.set_color_temp = MagicMock(return_value=None)
     fake_yeelight.return_value = device
     light = miio_client.MiMonitorLight(
         ip="1.2.3.4", token="t" * 32, model=LEGACY_MODEL
     )
+    fired = {}
+    monkeypatch.setattr(light, "_aux_power_on", lambda: fired.setdefault("fired", True))
     light.set_color_temp(4000)
-    device.on.assert_called_once()
+    import time as _t
+    deadline = _t.time() + 1.0
+    while not fired.get("fired") and _t.time() < deadline:
+        _t.sleep(0.01)
+    assert fired.get("fired") is True
     device.set_color_temp.assert_called_once_with(4000)
     assert light.state.is_on is True
+    assert light.state.color_temp == 4000
 
 
-def test_miot_set_brightness_auto_powers_on_when_off(fake_miot):
-    """Auto-on must also work on the MIoT path — set_property('power', True) first."""
+def test_miot_set_brightness_auto_powers_on_when_off(fake_miot, monkeypatch):
+    """MIoT：调亮度时点亮走独立 aux（不入主命令列），亮度不被旧返回覆盖。"""
     device = MagicMock()
     device.set_property = MagicMock(return_value=None)
     fake_miot.return_value = device
     light = miio_client.MiMonitorLight(
         ip="1.2.3.4", token="t" * 32, model=MIOT_MODEL
     )
+    monkeypatch.setattr(light, "_aux_power_on", lambda: None)
     light.set_brightness(55)
-    # First call must be the power-on, then brightness
     calls = [c.args for c in device.set_property.call_args_list]
-    assert ("power", True) in calls
-    assert ("brightness", 55) in calls
-    assert calls.index(("power", True)) < calls.index(("brightness", 55))
+    # 主命令只发亮度；点亮走独立 aux → 不会用旧的 power 返回覆盖亮度
+    assert calls == [("brightness", 55)]
+    assert light.state.is_on is True
+    assert light.state.brightness == 55
 
 
 # ── MIoT-for-unknown probe path ───────────────────────────────────────────────

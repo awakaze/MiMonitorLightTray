@@ -118,10 +118,12 @@ class _StatusSnapshot:
 class _LegacyBackend:
     """Wraps ``miio.Yeelight`` for devices speaking legacy string properties."""
 
-    def __init__(self, ip: str, token: str, model: str) -> None:
+    def __init__(self, ip: str, token: str, model: str,
+                 timeout: float | None = None) -> None:
         # python-miio's Yeelight tolerates an empty/unknown model — it only
         # affects an internal spec helper that we silence in __main__.
-        self._dev = Yeelight(ip=ip, token=token, model=model or "")
+        self._dev = Yeelight(ip=ip, token=token, model=model or "",
+                             timeout=timeout)
 
     @property
     def device(self) -> Device:
@@ -163,8 +165,10 @@ class _MiotBackend:
     """
 
     def __init__(self, ip: str, token: str, model: str,
-                 mapping: Dict[str, Dict[str, int]]) -> None:
-        self._dev = MiotDevice(ip=ip, token=token, model=model, mapping=mapping)
+                 mapping: Dict[str, Dict[str, int]],
+                 timeout: float | None = None) -> None:
+        self._dev = MiotDevice(ip=ip, token=token, model=model,
+                               mapping=mapping, timeout=timeout)
 
     @property
     def device(self) -> Device:
@@ -212,7 +216,20 @@ class _MiotBackend:
         self._dev.set_property("color_temperature", value)
 
 
-def _make_backend(ip: str, token: str, model: str, *, enable_miot_for_unknown: bool = False):
+# Short send timeout: on a LAN the round-trip is ~150ms (peaks ~300ms), so the
+# default 5s (python-miio) is extreme overkill for such low-latency links.
+# When a packet is dropped (e.g. NIC green-Ethernet / switch idles the first
+# packet after inactivity), dropping the timeout to ~300ms makes python-miio's
+# built-in retry take over almost immediately, recovering in ~0.5s instead of
+# ~5s. Must stay ABOVE the real RTT peak (~300ms here): a timeout below it would
+# wrongly "time out" normal commands and force a re-send on every one, making
+# things slower and doubling traffic.
+_SEND_TIMEOUT = 0.3
+
+
+def _make_backend(ip: str, token: str, model: str, *,
+                  enable_miot_for_unknown: bool = False,
+                  timeout: float = _SEND_TIMEOUT):
     """Pick the right backend for ``model``.
 
     Resolution order:
@@ -223,12 +240,16 @@ def _make_backend(ip: str, token: str, model: str, *, enable_miot_for_unknown: b
       3. Otherwise → legacy Yeelight.
     """
     if model and model in _MIOT_MAPPINGS:
-        return _MiotBackend(ip=ip, token=token, model=model,
-                            mapping=_MIOT_MAPPINGS[model])
-    if enable_miot_for_unknown:
-        return _MiotBackend(ip=ip, token=token, model=model or "",
-                            mapping=_GENERIC_MIOT_LIGHT_MAPPING)
-    return _LegacyBackend(ip=ip, token=token, model=model)
+        backend = _MiotBackend(ip=ip, token=token, model=model,
+                               mapping=_MIOT_MAPPINGS[model], timeout=timeout)
+    elif enable_miot_for_unknown:
+        backend = _MiotBackend(ip=ip, token=token, model=model or "",
+                               mapping=_GENERIC_MIOT_LIGHT_MAPPING,
+                               timeout=timeout)
+    else:
+        backend = _LegacyBackend(ip=ip, token=token, model=model,
+                                 timeout=timeout)
+    return backend
 
 
 class MiMonitorLight:
@@ -349,6 +370,7 @@ class MiMonitorLight:
         )
         self._state = LightState()
         self._listener: Optional[StateListener] = None
+        self._local_write_guard = False
         self._last_error_log = 0.0
         self._discovery_in_progress = False
         self._color_temp_min, self._color_temp_max = self.ct_range_for(self._model)
@@ -445,7 +467,8 @@ class MiMonitorLight:
             return
         try:
             info = self._device.info()
-        except Exception:  # noqa: BLE001 — info is best-effort
+        except Exception as exc:  # noqa: BLE001 — info is best-effort
+            log.debug("info dev=%s failed: %s", self._ip, exc)
             return
 
         if self._device_id == 0:
@@ -516,6 +539,22 @@ class MiMonitorLight:
         with self._lock:
             try:
                 status = self._device.status()
+            except DeviceException as exc:
+                self._record_error(exc, "status")
+                self._notify()
+                return self._state
+            if self._local_write_guard:
+                # 缓存里是用户刚手动调整的值。灯可能在别处被改过，refresh 仍要
+                # 能把真实状态带回来；但如果这次读取滞后于那次手动调整，就拿
+                # 旧设备的返回值去回退它，反而把用户刚调好的亮度/色温覆盖了。
+                # 所以这里只做两件事：确认可达性 + 消费掉这次 guard。——用户
+                # 的主动修改优先；下一次 refresh 再按设备真实状态校正（外部修改
+                # 到那时就能反映出来）。
+                self._state.reachable = True
+                self._state.error = None
+                self._local_write_guard = False
+                self._record_success()
+            else:
                 self._state = LightState(
                     is_on=status.is_on,
                     brightness=status.brightness,
@@ -524,10 +563,12 @@ class MiMonitorLight:
                     error=None,
                 )
                 self._record_success()
-            except DeviceException as exc:
-                self._record_error(exc, "status")
         self._notify()
         return self._state
+
+    def _mark_local_write(self) -> None:
+        """记录一次刚发生的主动修改，使随后一次迟到读取不可回退它。"""
+        self._local_write_guard = True
 
     def set_power(self, on: bool) -> None:
         with self._lock:
@@ -537,6 +578,7 @@ class MiMonitorLight:
                 else:
                     self._device.off()
                 self._state.is_on = on
+                self._mark_local_write()
                 self._record_success()
             except DeviceException as exc:
                 self._record_error(exc, "power")
@@ -547,6 +589,7 @@ class MiMonitorLight:
             try:
                 self._device.toggle()
                 self._state.is_on = not self._state.is_on
+                self._mark_local_write()
                 self._record_success()
             except DeviceException as exc:
                 self._record_error(exc, "toggle")
@@ -557,15 +600,16 @@ class MiMonitorLight:
         value = max(self.BRIGHTNESS_MIN, min(self.BRIGHTNESS_MAX, int(value)))
         with self._lock:
             try:
-                # Auto-on: legacy Yeelight's auto-on behavior is firmware-dependent
-                # and MIoT lamps don't auto-on at all. Explicitly power on first
-                # if the cached state says we're off — otherwise the slider drag
-                # would do nothing visible.
+                # 从关到调要能自动点亮：缓存认为关（可能在别处被关过）时，
+                # 点亮动作由独立辅助 device 并发发出，避免旧版"on() 等返回
+                # 再 set_brightness"两次串行往返拖慢首调。亮度命令照常发，
+                # 缓存 is_on 置为亮（体现调节=点亮意图）。
                 if not self._state.is_on:
-                    self._device.on()
-                    self._state.is_on = True
+                    threading.Thread(target=self._aux_power_on, daemon=True).start()
                 self._device.set_brightness(value)
                 self._state.brightness = value
+                self._state.is_on = True
+                self._mark_local_write()
                 self._record_success()
             except DeviceException as exc:
                 self._record_error(exc, "set_brightness")
@@ -577,15 +621,32 @@ class MiMonitorLight:
         with self._lock:
             try:
                 if not self._state.is_on:
-                    self._device.on()
-                    self._state.is_on = True
+                    threading.Thread(target=self._aux_power_on, daemon=True).start()
                 self._device.set_color_temp(value)
                 self._state.color_temp = value
+                self._state.is_on = True
+                self._mark_local_write()
                 self._record_success()
             except DeviceException as exc:
                 self._record_error(exc, "set_color_temp")
         self._notify()
         return value
+
+    def _aux_power_on(self) -> None:
+        """在独立 device 上并发点亮，与亮度命令并行（缩短首调耗时）。
+
+        关键防护：此辅助点亮**绝不回写 brightness / color_temp / is_on**，
+        让亮度只由 set_brightness / set_color_temp 写入，避免并发的旧返回
+        值覆盖用户刚调整的值。它只用一条 on() 点亮，失败仅记日志。
+        """
+        try:
+            aux = _make_backend(
+                self._ip, self._token, self._model,
+                enable_miot_for_unknown=self._enable_miot_for_unknown,
+            )
+            aux.on()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("辅助点亮失败(不影响亮度命令): %s", exc)
 
 
 # Bulk-imported MIoT data from miot-spec.org, generated by

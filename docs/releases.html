@@ -41,8 +41,42 @@
 
 <article class="release release-latest">
     <div class="release-header">
-        <h2>v1.5.3 · 开机补偿刷新</h2>
+        <h2>v1.5.4 · 调节更跟手 · 闲置后不再卡 5 秒</h2>
         <span class="release-tag">● 当前版本</span>
+    </div>
+    <p class="release-date">2026-09 发布</p>
+    <div class="release-body">
+        <p>集中解决调节速度的两个体验问题：<strong>闲置一阵后再调亮度明显变慢 / 卡顿</strong>，以及<strong>从关灯状态直接拖滑杆首调慢半拍</strong>。</p>
+
+        <h3>🐛 闲置后首包被吞、调节卡 ~5s → 局域网级超时 + 快速重试</h3>
+        <ul>
+            <li>根因：闲置几分钟后首条命令在链路重建窗口被吞/无响应，python-miio 会默认干等 <code>5s</code> 超时才重试；这 5 秒里你对同一盏灯的连续调节全被锁内排队顶住，命令一次性爆出——表现为"生效延迟于好几次操作"</li>
+            <li>局域网实测正常往返仅 ~150ms（峰值 ~300ms），5s 超时严重过剩；新版把发送超时降到 <strong>0.3s</strong>，首包被吞时内置重试立即接管，闲置后第一次操作从 <strong>~5s 压到 ~0.5s</strong></li>
+        </ul>
+
+        <h3>✨ 从关到调改为并发点亮，首调不再慢一拍</h3>
+        <ul>
+            <li>关灯状态拖滑杆时，此前先 <code>on()</code> 等返回再发亮度命令，两次串行往返拖慢首调；新版点亮交给<strong>独立并发路径</strong>，与亮度命令并行，首调近似只花一次命令往返</li>
+        </ul>
+
+        <h3>🧹 其它</h3>
+        <ul>
+            <li>手动调整不再被晚到的旧读取覆盖：调好亮度后，一次滞后于调整的旧状态读取不会拿旧值回退它；之后刷新仍会从设备读回真实状态（外部改动照样带回）</li>
+            <li>多灯保持并行刷新，一台慢不阻塞其它设备</li>
+        </ul>
+    </div>
+    <div class="release-actions">
+        <a class="btn btn-primary btn-sm" data-download href="https://github.com/awakaze/MiMonitorLightTray/releases/latest" target="_blank" rel="noopener">下载 EXE</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/releases/tag/v1.5.4" target="_blank" rel="noopener">GitHub Release</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/compare/v1.5.3...v1.5.4" target="_blank" rel="noopener">Compare</a>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/blob/main/release-notes/RELEASE_NOTES_v1.5.4.md" target="_blank" rel="noopener">Markdown 原文</a>
+    </div>
+</article>
+
+<article class="release">
+    <div class="release-header">
+        <h2>v1.5.3 · 开机补偿刷新</h2>
+        <span class="release-tag" style="background: var(--bg-tertiary); color: var(--text-muted);">2026-09</span>
     </div>
     <p class="release-date">2026-09 发布</p>
     <div class="release-body">
@@ -60,7 +94,6 @@
         </ul>
     </div>
     <div class="release-actions">
-        <a class="btn btn-primary btn-sm" data-download href="https://github.com/awakaze/MiMonitorLightTray/releases/latest" target="_blank" rel="noopener">下载 EXE</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/releases/tag/v1.5.3" target="_blank" rel="noopener">GitHub Release</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/compare/v1.5.2...v1.5.3" target="_blank" rel="noopener">Compare</a>
         <a class="btn btn-secondary btn-sm" href="https://github.com/awakaze/MiMonitorLightTray/blob/main/release-notes/RELEASE_NOTES_v1.5.3.md" target="_blank" rel="noopener">Markdown 原文</a>
