@@ -85,7 +85,15 @@ class TrayController:
         self._thread: threading.Thread | None = None
 
     def _build_menu(self) -> None:
-        """Build or rebuild the tray menu."""
+        """Build the menu and create the tray icon (called exactly once).
+
+        NOTE: never call this again after start() — pystray's running icon is
+        the object bound to ``self._icon`` here. Recreating it would silently
+        detach set_state()/set_title() from the visible tray icon (all later
+        updates would target an orphaned Icon instance). The update-available
+        entry is dynamic (callable text/visible); after a version check just
+        call ``self._icon.update_menu()`` to re-render the running menu.
+        """
         menu_items = [
             MenuItem("Open", self._handle_open, default=True, visible=False),
             MenuItem("调整亮度", self._handle_open),
@@ -107,14 +115,13 @@ class TrayController:
         if self._version_checker:
             menu_items.append(Menu.SEPARATOR)
 
-            # Check if update is available
-            if self._version_checker.has_checked():
-                update_info = self._version_checker.get_update_info()
-                if update_info:
-                    menu_items.append(MenuItem(
-                        f"🔔 新版本可用: v{update_info['version']}",
-                        self._handle_download_update,
-                    ))
+            # Dynamic entry: text/visible are callables re-evaluated on every
+            # menu render (icon.update_menu()), so no Icon rebuild is needed.
+            menu_items.append(MenuItem(
+                lambda _item: self._update_entry_text(),
+                self._handle_download_update,
+                visible=lambda _item: self._update_entry_visible(),
+            ))
 
             # Manual check for updates
             menu_items.append(MenuItem("检查更新", self._handle_check_update))
@@ -143,30 +150,39 @@ class TrayController:
         )
 
     def start(self) -> None:
-        # Rebuild menu in case version check completed
-        if self._version_checker and self._version_checker.has_checked():
-            try:
-                self._build_menu()
-            except Exception as exc:
-                log.warning("Failed to build menu with version check: %s", exc)
         self._thread = threading.Thread(target=self._icon.run, name="tray", daemon=True)
         self._thread.start()
 
+    def _update_entry_visible(self) -> bool:
+        """Menu-item visibility predicate — re-evaluated on each menu render."""
+        if not self._version_checker or not self._version_checker.has_checked():
+            return False
+        return self._version_checker.get_update_info() is not None
+
+    def _update_entry_text(self) -> str:
+        """Menu-item text predicate — re-evaluated on each menu render."""
+        if not self._version_checker:
+            return ""
+        update_info = self._version_checker.get_update_info()
+        if not update_info:
+            return ""
+        return f"🔔 新版本可用: v{update_info['version']}"
+
     def refresh_menu_if_update_available(self) -> None:
-        """Rebuild menu if version check found an update (called from main thread)."""
-        if self._version_checker and self._version_checker.has_checked():
+        """Re-render the running menu if a version check found an update.
+
+        Called from the main thread after the async check completes. Must NOT
+        rebuild the Icon — only ``update_menu()`` the one that is running,
+        otherwise set_state()/set_title() would target an orphaned object and
+        the visible tray icon would freeze.
+        """
+        if self._update_entry_visible():
             update_info = self._version_checker.get_update_info()
-            if update_info:
-                log.info("Update available, refreshing menu: v%s", update_info['version'])
-                try:
-                    # Rebuild the icon with new menu
-                    old_icon = self._icon
-                    self._build_menu()
-                    # Update the running icon's menu
-                    if hasattr(old_icon, '_menu_handle'):
-                        old_icon.update_menu()
-                except Exception as exc:
-                    log.warning("Failed to refresh menu: %s", exc)
+            log.info("Update available, refreshing menu: v%s", update_info['version'])
+            try:
+                self._icon.update_menu()
+            except Exception as exc:
+                log.warning("Failed to refresh menu: %s", exc)
 
     def stop(self) -> None:
         try:
@@ -302,11 +318,13 @@ class TrayController:
                 self._version_checker._update_info = update_info
                 self._version_checker._checked = True
 
-                # Rebuild menu to show result
+                # Re-render the running menu to show/hide the update entry.
+                # Do NOT rebuild the Icon — the running icon object must stay
+                # the target of set_state()/set_title().
                 try:
-                    self._build_menu()
+                    self._icon.update_menu()
                 except Exception as exc:
-                    log.warning("Failed to rebuild menu: %s", exc)
+                    log.warning("Failed to refresh menu: %s", exc)
 
                 # Show notification
                 if update_info:
