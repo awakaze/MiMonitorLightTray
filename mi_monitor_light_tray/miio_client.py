@@ -317,6 +317,7 @@ class MiMonitorLight:
         on_ip_changed: Optional[Callable[[str], None]] = None,
         on_range_changed: Optional[Callable[[int, int], None]] = None,
         on_model_resolved: Optional[Callable[[str], None]] = None,
+        on_device_id_resolved: Optional[Callable[[int], None]] = None,
         enable_miot_for_unknown: bool = False,
     ) -> None:
         self._ip = ip
@@ -333,6 +334,7 @@ class MiMonitorLight:
         self._on_ip_changed = on_ip_changed
         self._on_range_changed = on_range_changed
         self._on_model_resolved = on_model_resolved
+        self._on_device_id_resolved = on_device_id_resolved
         self._enable_miot_for_unknown = enable_miot_for_unknown
         self._lock = threading.Lock()
 
@@ -354,6 +356,7 @@ class MiMonitorLight:
                         self._device_id = _extract_device_id(probe)
                         if self._device_id:
                             log.info("Captured device ID during init: %08x", self._device_id)
+                            self._notify_device_id()
                     if on_model_resolved is not None:
                         try:
                             on_model_resolved(detected_model)
@@ -413,6 +416,24 @@ class MiMonitorLight:
             listener(self._state)
         except Exception:  # noqa: BLE001
             log.exception("State listener raised")
+
+    def _notify_device_id(self) -> None:
+        """Report a freshly captured hardware device id to the caller.
+
+        Separate from ``on_model_resolved`` on purpose: capturing the id is not
+        a model question, and it must be reported even when the configured model
+        is locked (the common case — scan/cloud add always fills ``model`` in).
+        The caller persists it so IP auto-rediscovery still works after a
+        restart; without it ``_record_error`` sees ``device_id == 0`` and never
+        looks the device up again.
+        """
+        callback = self._on_device_id_resolved
+        if callback is None:
+            return
+        try:
+            callback(self._device_id)
+        except Exception:  # noqa: BLE001
+            log.exception("on_device_id_resolved listener raised")
 
     def _record_error(self, exc: Exception, action: str) -> None:
         now = time.monotonic()
@@ -475,6 +496,7 @@ class MiMonitorLight:
             self._device_id = _extract_device_id(self._device.device)
             if self._device_id:
                 log.info("Captured device ID: %08x", self._device_id)
+                self._notify_device_id()
 
         if not self._model_resolved:
             reported = getattr(info, "model", "") or ""

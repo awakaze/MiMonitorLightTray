@@ -134,6 +134,7 @@ class App:
             on_ip_changed=lambda new_ip: self._on_ip_changed(dev_config.id, new_ip),
             on_range_changed=lambda lo, hi: self._on_ct_range_changed(dev_config.id, lo, hi),
             on_model_resolved=lambda model: self._on_model_resolved(dev_config.id, model),
+            on_device_id_resolved=lambda did: self._on_device_id_resolved(dev_config.id, did),
             enable_miot_for_unknown=dev_config.enable_miot_for_unknown,
         )
 
@@ -537,6 +538,26 @@ class App:
             self._config.save()
         except OSError as exc:
             log.warning("Failed to save resolved model: %s", exc)
+
+    def _on_device_id_resolved(self, device_id: str, hardware_id: int) -> None:
+        """Persist a captured hardware device id to config (worker thread).
+
+        IP auto-rediscovery matches on this value, and ``_record_error`` only
+        starts a lookup when it is non-zero. Before this was persisted, a device
+        added by scan (which always stores a non-empty ``model``) kept
+        ``device_id=0`` in config forever, so a lamp that took a new DHCP lease
+        while the app was closed could never be found again.
+        """
+        dev_config = self._find_device_config(device_id)
+        if not dev_config or hardware_id <= 0 or dev_config.device_id == hardware_id:
+            return
+        log.info("Saving device id %08x for %s; auto-discovery enabled",
+                 hardware_id, dev_config.name)
+        dev_config.device_id = hardware_id
+        try:
+            self._config.save()
+        except OSError as exc:
+            log.warning("Failed to save device id: %s", exc)
 
     def _find_device_config(self, device_id: str):
         """Find device config by id."""

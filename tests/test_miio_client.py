@@ -503,6 +503,44 @@ def test_explicit_model_locks_against_info_overwrite(fake_yeelight):
     assert model_callbacks == []
 
 
+def test_locked_model_reports_device_id_without_touching_model(fake_yeelight):
+    """Locked model + freshly captured device_id → id callback fires, model one doesn't.
+
+    Regression: the id capture was only reported through ``on_model_resolved``,
+    which is gated on an unlocked model. Devices added by scan/cloud always have
+    a non-empty ``model`` (hence locked), so the captured id never reached
+    config: it stayed ``device_id=0``, and ``_record_error`` only auto-discovers
+    when the id is non-zero. A lamp that took a new DHCP lease while the app was
+    closed could therefore never be found again.
+    """
+    device = MagicMock()
+    device.set_brightness = MagicMock(return_value=None)
+    device.info = MagicMock(return_value=MagicMock(model="yeelink.light.lamp22"))
+    device._protocol._device_id = b"\x01\x02\x03\x04"
+    fake_yeelight.return_value = device
+
+    model_callbacks: list[str] = []
+    id_callbacks: list[int] = []
+    light = miio_client.MiMonitorLight(
+        ip="1.2.3.4", token="t" * 32,
+        model="yeelink.light.lamp2",  # config-supplied → locked
+        on_model_resolved=lambda m: model_callbacks.append(m),
+        on_device_id_resolved=lambda d: id_callbacks.append(d),
+    )
+
+    light.set_brightness(50)
+    assert light.device_id == 0x01020304
+    # The locked model still wins over what info() reports…
+    assert light.model == "yeelink.light.lamp2"
+    assert model_callbacks == []
+    # …but the id is reported so the caller can persist it.
+    assert id_callbacks == [0x01020304]
+
+    # Reported once per session, not on every write.
+    light.set_brightness(60)
+    assert id_callbacks == [0x01020304]
+
+
 def test_blank_model_auto_resolves_and_fires_callback(fake_yeelight, fake_miot, monkeypatch):
     """Blank model in config → info() resolves → on_model_resolved fires once.
 
