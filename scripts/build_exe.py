@@ -74,6 +74,8 @@ def main() -> int:
         # package and bundles every non-Python file.
         "--collect-data",
         "miio",
+        "--copy-metadata",
+        "mi-monitor-light-tray",
         # Hidden imports for token extractor
         "--hidden-import",
         "Crypto.Cipher.ARC4",
