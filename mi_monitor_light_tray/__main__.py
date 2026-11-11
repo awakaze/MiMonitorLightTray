@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from .i18n import LANGUAGES, set_language, t
+
 import argparse
 import logging
 import sys
 import threading
-from tkinter import messagebox
+from . import dialogs as messagebox
 
 from .config import AppConfig
 from .single_instance import SingleInstance
@@ -40,6 +42,7 @@ class App:
         from .version_checker import VersionChecker
 
         self._config = config
+        self._settings_window = None
         # Dict[device_id, MiMonitorLight] - keyed by DeviceConfig.id
         self._lights: dict[str, MiMonitorLight] = {}
 
@@ -60,7 +63,7 @@ class App:
         first_light = next(iter(self._lights.values()), None)
 
         self._tray = TrayController(
-            title="Mi Monitor Light",
+            title=t('Mi Monitor Light'),
             on_left_click=self._on_tray_click,
             on_open_settings=self._open_settings,
             on_exit=self._on_exit,
@@ -79,6 +82,7 @@ class App:
             version_checker=self._version_checker,
             on_toggle_auto_check_update=self._toggle_auto_check_update,
             get_auto_check_update=lambda: self._config.auto_check_update,
+            on_language_changed=self._request_language_change,
         )
         # Set up state listeners for all lights
         for dev_id, light in self._lights.items():
@@ -572,12 +576,43 @@ class App:
     def _show_settings(self) -> None:
         from .device_list_wizard import DeviceListWizard
 
-        DeviceListWizard(
+        current = self._settings_window
+        if current is not None and current._root.winfo_exists():
+            current._root.deiconify()
+            current._root.lift()
+            return
+        self._settings_window = DeviceListWizard(
             self._config,
             on_saved=self._on_config_saved,
             parent=self._flyout._root,
             on_check_update=self._trigger_check_update,
+            on_language_changed=self._refresh_language,
         )
+
+    def _refresh_language(self, language: str | None = None) -> None:
+        """Refresh visible text without reconnecting or sending power commands."""
+        set_language(self._config.language if language is None else language)
+        self._flyout.rebuild(self._lights, self._config)
+        self._tray.set_title(t('Mi Monitor Light'))
+        self._tray.refresh_language()
+
+    def _request_language_change(self, language: str) -> None:
+        # A tray callback runs outside Tk's main thread.
+        self._flyout._root.after(0, lambda: self._change_language(language))
+
+    def _change_language(self, language: str) -> None:
+        old_language = self._config.language
+        self._config.language = language
+        try:
+            self._config.save()
+        except OSError as exc:
+            self._config.language = old_language
+            messagebox.showerror(t('保存失败'), str(exc), parent=self._flyout._root)
+            return
+        settings = self._settings_window
+        if settings is not None and settings._root.winfo_exists():
+            settings.accept_language(language)
+        self._refresh_language()
 
     def _trigger_check_update(self) -> None:
         """Trigger the same update-check flow as the tray menu."""
@@ -586,6 +621,7 @@ class App:
     def _on_config_saved(self, config: AppConfig) -> None:
         log.info("Config updated; reconnecting to devices")
         self._config = config
+        set_language(config.language)
 
         # Rebuild lights dict from new device list
         old_lights = self._lights
@@ -608,7 +644,8 @@ class App:
 
         # Update tray
         first_light = next(iter(self._lights.values()), None)
-        self._tray.set_title("Mi Monitor Light")
+        self._tray.set_title(t('Mi Monitor Light'))
+        self._tray.refresh_language()
         if first_light:
             self._tray._light = first_light
 
@@ -633,18 +670,15 @@ class App:
         def show_dialog():
             try:
                 import tkinter as tk
-                from tkinter import messagebox
+                from . import dialogs as messagebox
                 import webbrowser
 
                 # Use existing flyout root for the dialog
                 root = self._flyout._root
 
                 result = messagebox.askyesno(
-                    "发现新版本",
-                    f"检测到新版本 v{update_info['version']}！\n\n"
-                    f"当前版本已过时，是否立即前往下载？\n\n"
-                    f"点击「是」在浏览器打开下载页\n"
-                    f"点击「否」稍后再说（可在托盘菜单中查看）",
+                    t('发现新版本'),
+                    t('检测到新版本 v{0}！\n\n当前版本已过时，是否立即前往下载？\n\n点击「是」在浏览器打开下载页\n点击「否」稍后再说（可在托盘菜单中查看）', update_info['version']),
                     parent=root,
                 )
 
@@ -754,20 +788,24 @@ class App:
 
 
 def _run_setup_only(config: AppConfig) -> int:
-    from .setup_wizard import SetupWizard
+    from .device_list_wizard import DeviceListWizard
 
     saved: dict = {}
 
     def _on_saved(updated: AppConfig) -> None:
         saved["config"] = updated
 
-    wizard = SetupWizard(config, on_saved=_on_saved)
+    wizard = DeviceListWizard(config, on_saved=_on_saved)
     wizard.run()
     return 0 if saved else 1
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mi-monitor-light-tray")
+    parser.add_argument(
+        "--language", choices=list(LANGUAGES),
+        help="UI language: auto (Windows), en (English), ru (Russian), zh (Chinese).",
+    )
     parser.add_argument(
         "--setup",
         action="store_true",
@@ -786,26 +824,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     _quiet_miio_warnings()
 
+    config = AppConfig.load()
+    if args.language:
+        config.language = args.language
+    set_language(config.language)
+
     # Single-instance check — prevent multiple copies running simultaneously.
     lock = SingleInstance("MiMonitorLightTray")
     if not lock.acquired:
         log.warning("Another instance is already running")
         try:
             import tkinter as tk
-            from tkinter import messagebox
+            from . import dialogs as messagebox
             root = tk.Tk()
             root.withdraw()
             messagebox.showwarning(
-                "已在运行",
-                "小米显示器挂灯控制程序已经在运行\n\n"
-                "请检查系统托盘（屏幕右下角）查看图标",
+                t('已在运行'),
+                t('小米显示器挂灯控制程序已经在运行\n\n请检查系统托盘（屏幕右下角）查看图标'),
             )
             root.destroy()
         except Exception:
             pass
         return 1
-
-    config = AppConfig.load()
 
     # Open wizard if no devices configured OR if --setup flag passed
     if args.setup or not config.devices or not any(d.is_complete() for d in config.devices):
@@ -813,6 +853,7 @@ def main(argv: list[str] | None = None) -> int:
         if rc != 0:
             return rc
         config = AppConfig.load()
+        set_language(config.language)
         if not config.devices or not any(d.is_complete() for d in config.devices):
             log.error("Setup not completed; exiting.")
             return 1

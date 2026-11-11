@@ -90,6 +90,7 @@ class AppConfig:
     widget: WidgetConfig = field(default_factory=WidgetConfig)
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     auto_check_update: bool = True  # 启动时自动检查更新
+    language: str = "auto"  # auto / en / ru / zh; old configs follow Windows
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "AppConfig":
@@ -142,7 +143,8 @@ class AppConfig:
             active_device_id=active_device_id,
             widget=widget,
             hotkey=hotkey,
-            auto_check_update=auto_check_update
+            auto_check_update=auto_check_update,
+            language=data.get("language") if data.get("language") in ("auto", "en", "ru", "zh") else "auto",
         )
 
     def save(self, path: Optional[Path] = None) -> None:
@@ -154,6 +156,7 @@ class AppConfig:
             "widget": asdict(self.widget),
             "hotkey": asdict(self.hotkey),
             "auto_check_update": self.auto_check_update,
+            "language": self.language,
         }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")

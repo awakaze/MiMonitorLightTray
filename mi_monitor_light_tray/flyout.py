@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import logging
 import threading
 import tkinter as tk
@@ -162,19 +164,19 @@ class _DeviceSection:
 
         # Truncate only when longer than a full brand name like
         # "Mijia Computer Monitor Light Bar 2" (34 chars).
-        display_name = device.name or "未命名设备"
+        display_name = device.name or t('未命名设备')
         if len(display_name) > 34:
             display_name = display_name[:32] + "..."
 
         tk.Label(header, text=display_name,
                  fg=self.TEXT, bg=self.BG,
-                 font=("Microsoft YaHei UI", 10, "bold"),
+                 font=("Segoe UI", 10, "bold"),
                  anchor="w").grid(row=0, column=0, sticky="w")
 
         self._status_var = tk.StringVar(value="")
         tk.Label(header, textvariable=self._status_var,
                  fg=self.MUTED, bg=self.BG,
-                 font=("Microsoft YaHei UI", 9),
+                 font=("Segoe UI", 9),
                  anchor="e").grid(row=0, column=1, sticky="e", padx=(0, 6))
 
         power_btn = tk.Label(header, text="⏻", fg=self.MUTED, bg=self.BG,
@@ -198,7 +200,7 @@ class _DeviceSection:
                           min(MiMonitorLight.BRIGHTNESS_MAX, cached_b))
             self._brightness_var = tk.IntVar(value=cached_b)
             self._brightness_slider = self._build_row(
-                "亮度",
+                t('亮度'),
                 self._brightness_var,
                 MiMonitorLight.BRIGHTNESS_MIN,
                 MiMonitorLight.BRIGHTNESS_MAX,
@@ -212,7 +214,7 @@ class _DeviceSection:
                            min(light.color_temp_max, cached_ct))
             self._color_temp_var = tk.IntVar(value=cached_ct)
             self._color_temp_slider = self._build_row(
-                "色温",
+                t('色温'),
                 self._color_temp_var,
                 light.color_temp_min,
                 light.color_temp_max,
@@ -227,7 +229,7 @@ class _DeviceSection:
         top = tk.Frame(row, bg=self.BG)
         top.pack(fill="x")
         tk.Label(top, text=label, fg=self.MUTED, bg=self.BG,
-                 font=("Microsoft YaHei UI", 9),
+                 font=("Segoe UI", 9),
                  anchor="w").pack(side="left")
 
         bot = tk.Frame(row, bg=self.BG)
@@ -267,11 +269,11 @@ class _DeviceSection:
 
         # Always show cached is_on so users get an immediate answer; annotate
         # unreachable state with "(离线)" instead of hiding the last-known status.
-        on_text = "已开灯" if state.is_on else "已关灯"
+        on_text = t('已开灯') if state.is_on else t('已关灯')
         if state.reachable:
             self._status_var.set(on_text)
         elif state.error:
-            self._status_var.set(f"{on_text} (离线)")
+            self._status_var.set(t('{0} (离线)', on_text))
         else:
             self._status_var.set(on_text)
 
@@ -347,7 +349,7 @@ class FlyoutWindow:
         self._empty_var = tk.StringVar(value="")
         tk.Label(footer, textvariable=self._empty_var,
                  fg=self.MUTED, bg=self.BG,
-                 font=("Microsoft YaHei UI", 9)).pack(side="left")
+                 font=("Segoe UI", 9)).pack(side="left")
 
         # Settings button (rightmost)
         settings_btn = tk.Label(footer, text="⚙", fg=self.MUTED, bg=self.BG,
@@ -397,7 +399,7 @@ class FlyoutWindow:
 
         # Show empty hint if no visible sections
         if hasattr(self, "_empty_var"):
-            self._empty_var.set("" if visible else "无可显示的设备")
+            self._empty_var.set("" if visible else t('无可显示的设备'))
 
     def rebuild(self, lights: dict[str, MiMonitorLight],
                 config: AppConfig) -> None:
@@ -405,6 +407,11 @@ class FlyoutWindow:
         self._lights = lights
         self._config = config
         self._build_device_sections()
+        for device_id, light in list(lights.items()):
+            self._apply_state(light.state, device_id)
+        if self._visible:
+            self._position(self._root.winfo_x() + self._root.winfo_width() // 2,
+                           self._root.winfo_y() + self._root.winfo_height() + 35)
 
     def _debouncer(self, table: dict[str, Debouncer], device_id: str,
                    delay: float) -> Debouncer:
@@ -466,12 +473,12 @@ class FlyoutWindow:
 
     def _position(self, ax: int, ay: int) -> None:
         self._root.update_idletasks()
-        w = self.WIDTH
+        sw = self._root.winfo_screenwidth()
+        w = min(sw - 16, max(self.WIDTH, self._root.winfo_reqwidth()))
         # Force width first so content reflows, then re-measure height
         self._root.geometry(f"{w}x100")
         self._root.update_idletasks()
         h = self._root.winfo_reqheight()
-        sw = self._root.winfo_screenwidth()
         sh = self._root.winfo_screenheight()
         x  = max(8, min(sw - w - 8, ax - w // 2))
         y  = max(8, min(sh - h - 8, ay - h  - 35))

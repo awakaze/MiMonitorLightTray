@@ -15,6 +15,8 @@ the ``_Backend`` abstraction hides that difference from ``MiMonitorLight``.
 
 from __future__ import annotations
 
+from .i18n import t
+
 import logging
 import threading
 import time
@@ -799,8 +801,8 @@ def quick_ping(ip: str, token: str, timeout: float = 3.0) -> tuple[bool, str, in
         dev.timeout = timeout
         info = dev.info()
         device_id = _extract_device_id(dev)
-        return True, f"Connected: {info.model} (firmware {info.firmware_version})", device_id
+        return True, t("Connected: {0} (firmware {1})", info.model, info.firmware_version), device_id
     except DeviceException as exc:
-        return False, f"miio error: {exc}", 0
+        return False, t("Connection error: {0}", exc), 0
     except Exception as exc:  # noqa: BLE001 - surface anything else to the user
-        return False, f"{type(exc).__name__}: {exc}", 0
+        return False, t("Connection error: {0}", f"{type(exc).__name__}: {exc}"), 0

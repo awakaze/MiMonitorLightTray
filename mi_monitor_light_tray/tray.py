@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import LANGUAGES, menu_text, t
+
 import ctypes
 import logging
 import threading
@@ -58,6 +60,7 @@ class TrayController:
         version_checker: Optional[object] = None,
         on_toggle_auto_check_update: Optional[Callable[[], None]] = None,
         get_auto_check_update: Optional[Callable[[], bool]] = None,
+        on_language_changed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._on_left_click = on_left_click
         self._on_open_settings = on_open_settings
@@ -77,6 +80,7 @@ class TrayController:
         self._version_checker = version_checker
         self._on_toggle_auto_check_update = on_toggle_auto_check_update
         self._get_auto_check_update = get_auto_check_update
+        self._on_language_changed = on_language_changed
         self._desktop_widget: Optional[DesktopWidget] = None
         self._title = title  # Store title before building menu
 
@@ -94,18 +98,31 @@ class TrayController:
         entry is dynamic (callable text/visible); after a version check just
         call ``self._icon.update_menu()`` to re-render the running menu.
         """
+        def language_item(code, name):
+            def select(_icon, _item):
+                self._on_language_changed(code)
+            return MenuItem(
+                menu_text("System default") if code == "auto" else name,
+                select,
+                checked=lambda _item: self._config.language == code,
+                radio=True,
+            )
+
         menu_items = [
-            MenuItem("Open", self._handle_open, default=True, visible=False),
-            MenuItem("调整亮度", self._handle_open),
-            MenuItem("设置", self._handle_settings),
+            MenuItem(menu_text('Open'), self._handle_open, default=True, visible=False),
+            MenuItem(menu_text('调整亮度'), self._handle_open),
+            MenuItem(menu_text('设置'), self._handle_settings),
+            MenuItem("Language / Язык / 语言", Menu(*[
+                language_item(code, name) for code, name in LANGUAGES.items()
+            ]), visible=self._on_language_changed is not None),
             MenuItem(
-                "开机自启动",
+                menu_text('开机自启动'),
                 self._handle_toggle_autostart,
                 checked=lambda _i: autostart.is_enabled(),
             ),
             Menu.SEPARATOR,
             MenuItem(
-                "固定在桌面上",
+                menu_text('固定在桌面上'),
                 self._handle_toggle_desktop_widget,
                 checked=lambda _i: self._desktop_widget is not None and self._desktop_widget._visible,
             ),
@@ -124,21 +141,21 @@ class TrayController:
             ))
 
             # Manual check for updates
-            menu_items.append(MenuItem("检查更新", self._handle_check_update))
+            menu_items.append(MenuItem(menu_text('检查更新'), self._handle_check_update))
 
             # Auto-check toggle
             if self._get_auto_check_update:
                 menu_items.append(MenuItem(
-                    "启动时自动检查更新",
+                    menu_text('启动时自动检查更新'),
                     self._handle_toggle_auto_check_update,
                     checked=lambda _i: self._get_auto_check_update(),
                 ))
 
             # GitHub link
-            menu_items.append(MenuItem("访问 GitHub 主页", self._handle_open_github))
+            menu_items.append(MenuItem(menu_text('访问 GitHub 主页'), self._handle_open_github))
 
         menu_items.append(Menu.SEPARATOR)
-        menu_items.append(MenuItem("退出", self._handle_exit))
+        menu_items.append(MenuItem(menu_text('退出'), self._handle_exit))
 
         # Start dim — the first state callback flips it bright if any lamp is on.
         # Prevents a stale bright icon at boot before we know real state.
@@ -153,6 +170,11 @@ class TrayController:
         self._thread = threading.Thread(target=self._icon.run, name="tray", daemon=True)
         self._thread.start()
 
+    def refresh_language(self) -> None:
+        self._icon.update_menu()
+        if self._desktop_widget is not None:
+            self._desktop_widget._root.after(0, self._desktop_widget.retranslate)
+
     def _update_entry_visible(self) -> bool:
         """Menu-item visibility predicate — re-evaluated on each menu render."""
         if not self._version_checker or not self._version_checker.has_checked():
@@ -166,7 +188,7 @@ class TrayController:
         update_info = self._version_checker.get_update_info()
         if not update_info:
             return ""
-        return f"🔔 新版本可用: v{update_info['version']}"
+        return t('🔔 新版本可用: v{0}', update_info['version'])
 
     def refresh_menu_if_update_available(self) -> None:
         """Re-render the running menu if a version check found an update.
@@ -330,13 +352,12 @@ class TrayController:
                 if update_info:
                     try:
                         import tkinter as tk
-                        from tkinter import messagebox
+                        from . import dialogs as messagebox
                         root = tk.Tk()
                         root.withdraw()
                         messagebox.showinfo(
-                            "发现新版本",
-                            f"新版本 v{update_info['version']} 可用！\n\n"
-                            f"右键托盘菜单 → 访问Github 下载更新。",
+                            t('发现新版本'),
+                            t('新版本 v{0} 可用！\n\n右键托盘菜单 → 访问Github 下载更新。', update_info['version']),
                             parent=root,
                         )
                         root.destroy()
@@ -345,14 +366,14 @@ class TrayController:
                 else:
                     try:
                         import tkinter as tk
-                        from tkinter import messagebox
+                        from . import dialogs as messagebox
                         root = tk.Tk()
                         root.withdraw()
                         from .version_checker import get_current_version
                         current = get_current_version()
                         messagebox.showinfo(
-                            "已是最新版本",
-                            f"当前版本 v{current} 已是最新版本。",
+                            t('已是最新版本'),
+                            t('当前版本 v{0} 已是最新版本。', current),
                             parent=root,
                         )
                         root.destroy()

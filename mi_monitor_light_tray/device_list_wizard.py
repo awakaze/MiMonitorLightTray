@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from .i18n import LANGUAGES, set_language, t
+
 import logging
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
+from . import dialogs as messagebox
 from typing import Callable, Optional
 
 from .config import AppConfig, DeviceConfig, HotkeyConfig
@@ -26,17 +29,23 @@ class DeviceListWizard:
         *,
         parent: Optional[tk.Tk] = None,
         on_check_update: Optional[Callable[[], None]] = None,
+        on_language_changed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._config = config
         self._on_saved = on_saved
         self._on_check_update_cb = on_check_update
+        self._on_language_changed = on_language_changed
+        self._pending_language = config.language
+        self._saved = False
+        set_language(config.language)
         self._owns_root = parent is None
 
         self._root = tk.Tk() if parent is None else tk.Toplevel(parent)
-        self._root.title("小米显示器挂灯 — 设置")
+        self._root.title(t('小米显示器挂灯 — 设置'))
         self._root.resizable(True, True)
         self._root.configure(bg="#f3f3f3")
-        self._root.minsize(600, 500)
+        self._root.minsize(820, 570)
+        self._root.protocol("WM_DELETE_WINDOW", self._close)
 
         style = ttk.Style()
         try:
@@ -44,19 +53,19 @@ class DeviceListWizard:
         except tk.TclError:
             style.theme_use("clam")
         style.configure("TLabel", background="#f3f3f3",
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Segoe UI", 9))
         style.configure("TFrame", background="#f3f3f3")
         style.configure("TButton", padding=(12, 6),
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Segoe UI", 9))
         style.configure("Blue.TButton", foreground="#0066cc")
         style.configure("Small.TButton", padding=(8, 4),
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Segoe UI", 9))
 
         self._build_ui()
 
     def _build_ui(self) -> None:
         # Main container with scrollbar
-        main_container = ttk.Frame(self._root)
+        self._main_container = main_container = ttk.Frame(self._root)
         main_container.pack(fill="both", expand=True, padx=20, pady=16)
 
         # ── Title and Add Button ──────────────────────────────────────────
@@ -65,8 +74,8 @@ class DeviceListWizard:
 
         ttk.Label(
             title_row,
-            text="设备列表",
-            font=("Microsoft YaHei UI", 13, "bold"),
+            text=t('设备列表'),
+            font=("Segoe UI", 13, "bold"),
             foreground="#1a1a1a",
         ).pack(side="left")
 
@@ -75,14 +84,14 @@ class DeviceListWizard:
 
         ttk.Button(
             btn_frame,
-            text="云端导入",
+            text=t('云端导入'),
             command=self._open_cloud_login,
             style="Blue.TButton",
         ).pack(side="left", padx=4)
 
         ttk.Button(
             btn_frame,
-            text="+ 添加设备",
+            text=t('+ 添加设备'),
             command=self._on_add_device,
             style="Blue.TButton",
         ).pack(side="left")
@@ -129,11 +138,20 @@ class DeviceListWizard:
 
         settings_title = ttk.Label(
             main_container,
-            text="全局设置",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            text=t('全局设置'),
+            font=("Segoe UI", 11, "bold"),
             foreground="#1a1a1a",
         )
         settings_title.pack(anchor="w", pady=(0, 8))
+
+        language_row = ttk.Frame(main_container)
+        language_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(language_row, text="Language / Язык / 语言").pack(side="left", padx=(0, 12))
+        labels = [t("System default"), "English", "Русский", "中文"]
+        self._language_combo = ttk.Combobox(language_row, values=labels, state="readonly", width=24)
+        self._language_combo.current(list(LANGUAGES).index(self._pending_language))
+        self._language_combo.pack(side="left")
+        self._language_combo.bind("<<ComboboxSelected>>", self._select_language)
 
         # Autostart toggle
         self._autostart_var = tk.BooleanVar(value=autostart.is_enabled())
@@ -145,7 +163,7 @@ class DeviceListWizard:
             if actual != target or not ok:
                 self._autostart_var.set(actual)
 
-        ttk.Checkbutton(main_container, text="开机自启动",
+        ttk.Checkbutton(main_container, text=t('开机自启动'),
                         variable=self._autostart_var,
                         command=_toggle_autostart).pack(anchor="w", pady=(0, 12))
 
@@ -155,8 +173,8 @@ class DeviceListWizard:
 
         ttk.Label(
             about_frame,
-            text="关于",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            text=t('关于'),
+            font=("Segoe UI", 10, "bold"),
             foreground="#1a1a1a"
         ).pack(anchor="w", pady=(0, 8))
 
@@ -165,14 +183,14 @@ class DeviceListWizard:
 
         ttk.Button(
             btn_frame,
-            text="检查更新",
+            text=t('检查更新'),
             command=self._on_check_update,
             style="TButton"
         ).pack(side="left", padx=(0, 8))
 
         ttk.Button(
             btn_frame,
-            text="访问 GitHub 主页",
+            text=t('访问 GitHub 主页'),
             command=self._on_open_github,
             style="TButton"
         ).pack(side="left")
@@ -181,9 +199,9 @@ class DeviceListWizard:
         btn_row = ttk.Frame(main_container)
         btn_row.pack(fill="x", pady=(12, 0))
 
-        ttk.Button(btn_row, text="取消",
+        ttk.Button(btn_row, text=t('取消'),
                    command=self._close).pack(side="right", padx=4)
-        ttk.Button(btn_row, text="保存",
+        ttk.Button(btn_row, text=t('保存'),
                    command=self._on_save).pack(side="right")
 
     def _refresh_device_list(self) -> None:
@@ -196,8 +214,8 @@ class DeviceListWizard:
             # Empty state
             empty_label = ttk.Label(
                 self._device_list_frame,
-                text="暂无设备\n点击「+ 添加设备」或「云端导入」开始配置",
-                font=("Microsoft YaHei UI", 10),
+                text=t('暂无设备\n点击「+ 添加设备」或「云端导入」开始配置'),
+                font=("Segoe UI", 10),
                 foreground="#8a8a8a",
                 justify="center"
             )
@@ -226,7 +244,7 @@ class DeviceListWizard:
         drag_handle = tk.Label(
             card,
             text="⋮⋮",
-            font=("Microsoft YaHei UI", 14),
+            font=("Segoe UI", 14),
             foreground="#8a8a8a",
             bg="#ffffff",
             cursor="fleur"
@@ -242,8 +260,8 @@ class DeviceListWizard:
 
         name_label = tk.Label(
             info_frame,
-            text=device.name or "未命名设备",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            text=device.name or t('未命名设备'),
+            font=("Segoe UI", 10, "bold"),
             foreground="#1a1a1a",
             bg="#ffffff"
         )
@@ -252,7 +270,7 @@ class DeviceListWizard:
         ip_label = tk.Label(
             info_frame,
             text=f"IP: {device.ip}  |  Token: {'●' * 8}",
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
             foreground="#666666",
             bg="#ffffff"
         )
@@ -261,8 +279,8 @@ class DeviceListWizard:
         if device.model:
             model_label = tk.Label(
                 info_frame,
-                text=f"型号: {device.model}",
-                font=("Microsoft YaHei UI", 9),
+                text=t('型号: {0}', device.model),
+                font=("Segoe UI", 9),
                 foreground="#666666",
                 bg="#ffffff"
             )
@@ -275,10 +293,10 @@ class DeviceListWizard:
         show_brightness_var = tk.BooleanVar(value=device.show_brightness)
         cb_brightness = tk.Checkbutton(
             display_frame,
-            text="显示亮度调节",
+            text=t('显示亮度调节'),
             variable=show_brightness_var,
             bg="#ffffff",
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
             command=lambda i=index, v=show_brightness_var: self._on_toggle_show_brightness(i, v),
         )
         cb_brightness.pack(side="left", padx=(0, 12))
@@ -286,10 +304,10 @@ class DeviceListWizard:
         show_color_temp_var = tk.BooleanVar(value=device.show_color_temp)
         cb_color_temp = tk.Checkbutton(
             display_frame,
-            text="显示色温调节",
+            text=t('显示色温调节'),
             variable=show_color_temp_var,
             bg="#ffffff",
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
             command=lambda i=index, v=show_color_temp_var: self._on_toggle_show_color_temp(i, v),
         )
         cb_color_temp.pack(side="left")
@@ -300,14 +318,14 @@ class DeviceListWizard:
 
         ttk.Button(
             btn_frame,
-            text="编辑",
+            text=t('编辑'),
             command=lambda: self._on_edit_device(index),
             style="Small.TButton"
         ).pack(side="left", padx=2)
 
         ttk.Button(
             btn_frame,
-            text="删除",
+            text=t('删除'),
             command=lambda: self._on_delete_device(index),
             style="Small.TButton"
         ).pack(side="left", padx=2)
@@ -348,8 +366,8 @@ class DeviceListWizard:
         """Delete a device."""
         device = self._config.devices[index]
         result = messagebox.askyesno(
-            "确认删除",
-            f"确定要删除设备「{device.name}」吗？\n此操作无法撤销。",
+            t('确认删除'),
+            t('确定要删除设备「{0}」吗？\n此操作无法撤销。', device.name),
             parent=self._root
         )
         if result:
@@ -397,8 +415,8 @@ class DeviceListWizard:
 
         tk.Label(
             info_frame,
-            text=device.name or "未命名设备",
-            font=("Microsoft YaHei UI", 10, "bold"),
+            text=device.name or t('未命名设备'),
+            font=("Segoe UI", 10, "bold"),
             foreground="#1a1a1a",
             bg="#e3f2fd"
         ).pack(anchor="w")
@@ -406,7 +424,7 @@ class DeviceListWizard:
         tk.Label(
             info_frame,
             text=f"IP: {device.ip}",
-            font=("Microsoft YaHei UI", 9),
+            font=("Segoe UI", 9),
             foreground="#666666",
             bg="#e3f2fd"
         ).pack(anchor="w")
@@ -513,56 +531,45 @@ class DeviceListWizard:
 
     def _open_cloud_login(self) -> None:
         """Open cloud login for device import (multi-select mode)."""
-        initial_count = len(self._config.devices)
-
         def on_device_selected(device: XiaomiDeviceInfo):
             import uuid
             dev_config = DeviceConfig(
                 id=f"temp_{uuid.uuid4().hex[:8]}",
                 ip=device.localip,
                 token=device.token,
-                name=device.name or "显示器挂灯",
+                name=device.name or t('显示器挂灯'),
                 model=device.model or "",
                 device_id=0,
             )
             self._config.devices.append(dev_config)
+            self._refresh_device_list()
 
         # Create cloud login with multi-select enabled
         # The window will call on_device_selected for each selected device
         CloudLoginWindow(self._root, on_device_selected, multi_select=True)
 
-        # Refresh after window closes
-        self._root.after(500, lambda: self._check_import_complete(initial_count))
-
-    def _check_import_complete(self, initial_count: int) -> None:
-        """Check if devices were imported and refresh list."""
-        new_count = len(self._config.devices)
-        if new_count > initial_count:
-            self._refresh_device_list()
-            added = new_count - initial_count
-            messagebox.showinfo(
-                "导入成功",
-                f"已成功导入 {added} 个设备",
-                parent=self._root,
-            )
-
     def _on_save(self) -> None:
         """Save configuration."""
         if not self._config.devices:
             result = messagebox.askyesno(
-                "设备为空",
-                "当前没有配置任何设备，确定要保存吗？",
+                t('设备为空'),
+                t('当前没有配置任何设备，确定要保存吗？'),
                 parent=self._root
             )
             if not result:
                 return
 
+        previous_language = self._config.language
+        self._config.language = self._pending_language
         try:
             self._config.save()
-            self._on_saved(self._config)
-            self._close()
         except OSError as exc:
-            messagebox.showerror("保存失败", str(exc), parent=self._root)
+            self._config.language = previous_language
+            messagebox.showerror(t('保存失败'), str(exc), parent=self._root)
+            return
+        self._on_saved(self._config)
+        self._saved = True
+        self._close()
 
     def _on_check_update(self) -> None:
         """Check for updates — delegates to the tray's check flow."""
@@ -577,8 +584,32 @@ class DeviceListWizard:
         import webbrowser
         webbrowser.open("https://github.com/awakaze/MiMonitorLightTray")
 
+    def _select_language(self, _event=None) -> None:
+        self._pending_language = list(LANGUAGES)[self._language_combo.current()]
+        self._render_language()
+        if self._on_language_changed:
+            self._on_language_changed(self._pending_language)
+
+    def accept_language(self, language: str) -> None:
+        """A language saved by the tray becomes the new Cancel baseline."""
+        self._config.language = language
+        self._pending_language = language
+        self._render_language()
+
+    def _render_language(self) -> None:
+        set_language(self._pending_language)
+        self._root.title(t('小米显示器挂灯 — 设置'))
+        # Child editors and cloud sign-in windows own unsaved input and worker
+        # callbacks. Only rebuild the settings form when its language changes.
+        self._main_container.destroy()
+        self._build_ui()
+
     def _close(self) -> None:
         """Close the wizard."""
+        if not self._saved:
+            set_language(self._config.language)
+            if self._on_language_changed:
+                self._on_language_changed(self._config.language)
         try:
             self._root.destroy()
         except tk.TclError:
