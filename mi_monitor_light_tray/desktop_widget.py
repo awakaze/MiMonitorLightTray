@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import logging
 import threading
 import tkinter as tk
@@ -173,6 +175,7 @@ class DesktopWidget:
         self._on_open_setup = on_open_setup
         self._on_config_changed = on_config_changed
         self._visible = False
+        self._row_labels = []
         self._suppress = False
         self._locked = config.widget.locked  # 从配置加载锁定状态
         self._drag_data = {"x": 0, "y": 0}
@@ -224,13 +227,13 @@ class DesktopWidget:
         outer = tk.Frame(self._root, bg=self.BG)
         outer.pack(fill="x", padx=self.PAD_X, pady=(self.PAD_Y, 0))
 
-        self._build_row(outer, "☀", "亮度",
+        self._build_row(outer, "☀", t('亮度'),
                         self._brightness_var,
                         MiMonitorLight.BRIGHTNESS_MIN,
                         MiMonitorLight.BRIGHTNESS_MAX,
                         "", self._on_brightness)
 
-        self._build_row(outer, "🌡", "色温",
+        self._build_row(outer, "🌡", t('色温'),
                         self._color_temp_var,
                         self._light.color_temp_min,
                         self._light.color_temp_max,
@@ -241,7 +244,7 @@ class DesktopWidget:
         footer = tk.Frame(self._root, bg=self.BG)
         footer.pack(fill="x", padx=self.PAD_X, pady=(4, 6))
 
-        self._status_var = tk.StringVar(value="调整亮度")
+        self._status_var = tk.StringVar(value=t('调整亮度'))
         tk.Label(footer, textvariable=self._status_var,
                  fg=self.MUTED, bg=self.BG,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -277,9 +280,11 @@ class DesktopWidget:
         top.pack(fill="x")
         tk.Label(top, text=icon, fg=self.MUTED, bg=self.BG,
                  font=("Segoe MDL2 Assets", 12)).pack(side="left", padx=(0, 6))
-        tk.Label(top, text=label, fg=self.TEXT, bg=self.BG,
-                 font=("Microsoft YaHei UI", 10),
-                 anchor="w").pack(side="left")
+        row_label = tk.Label(top, text=label, fg=self.TEXT, bg=self.BG,
+                 font=("Segoe UI", 10),
+                 anchor="w")
+        row_label.pack(side="left")
+        self._row_labels.append(row_label)
 
         bot = tk.Frame(row, bg=self.BG)
         bot.pack(fill="x", pady=(4, 0))
@@ -311,6 +316,11 @@ class DesktopWidget:
         btn.bind("<Button-1>", lambda _: cmd())
         btn.bind("<Enter>",    lambda _: btn.configure(fg=self.TEXT))
         btn.bind("<Leave>",    lambda _: btn.configure(fg=self.MUTED))
+
+    def retranslate(self) -> None:
+        for label, source in zip(self._row_labels, ("亮度", "色温")):
+            label.configure(text=t(source))
+        self._apply_state(self._light.state)
 
     def _toggle_lock(self) -> None:
         """切换锁定/解锁状态。"""
@@ -380,7 +390,7 @@ class DesktopWidget:
         """设置亮度并更新状态。"""
         try:
             self._light.set_brightness(value)
-            self._root.after(0, lambda: self._status_var.set("已开灯"))
+            self._root.after(0, lambda: self._status_var.set(t('已开灯')))
         except Exception as e:
             log.warning("设置亮度失败: %s", e)
 
@@ -388,7 +398,7 @@ class DesktopWidget:
         """设置色温并更新状态。"""
         try:
             self._light.set_color_temp(value)
-            self._root.after(0, lambda: self._status_var.set("已开灯"))
+            self._root.after(0, lambda: self._status_var.set(t('已开灯')))
         except Exception as e:
             log.warning("设置色温失败: %s", e)
 
@@ -407,9 +417,9 @@ class DesktopWidget:
     def _update_power_state(self, is_on: bool) -> None:
         """更新电源状态显示。"""
         if is_on:
-            self._status_var.set("已开灯")
+            self._status_var.set(t('已开灯'))
         else:
-            self._status_var.set("已关灯")
+            self._status_var.set(t('已关灯'))
 
     def _open_settings(self) -> None:
         """打开设置。"""
@@ -432,9 +442,9 @@ class DesktopWidget:
             self._suppress = False
 
         if state.reachable:
-            self._status_var.set("已开灯" if state.is_on else "已关灯")
+            self._status_var.set(t('已开灯') if state.is_on else t('已关灯'))
         else:
-            self._status_var.set(f"离线 — {(state.error or '')[:40]}")
+            self._status_var.set(t('离线 — {0}', (state.error or '')[:40]))
 
     def show(self) -> None:
         """显示小部件。"""

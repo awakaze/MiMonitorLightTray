@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import logging
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
+from . import dialogs as messagebox
 from typing import Callable, List, Optional
 
 from .token_extractor.auth import QrCodeAuth
@@ -42,12 +45,12 @@ class CloudLoginWindow:
 
         # 创建顶级窗口（模态）
         self._root = tk.Toplevel(parent)
-        self._root.title("自动获取设备信息")
+        self._root.title(t('自动获取设备信息'))
         self._root.resizable(True, True)
         self._root.configure(bg="#f3f3f3")
         self._root.transient(parent)
         self._root.grab_set()
-        self._root.minsize(400, 350)
+        self._root.minsize(620, 350)
 
         # 窗口关闭时清理
         self._root.protocol("WM_DELETE_WINDOW", self._close)
@@ -86,12 +89,12 @@ class CloudLoginWindow:
 
         ttk.Label(
             self._content_frame,
-            text="请使用米家 App 扫描二维码登录",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            text=t('请使用米家 App 扫描二维码登录'),
+            font=("Segoe UI", 11, "bold"),
         ).pack(pady=(0, 12))
 
         # 二维码显示区域
-        self._qr_label = ttk.Label(self._content_frame, text="正在获取二维码...")
+        self._qr_label = ttk.Label(self._content_frame, text=t('正在获取二维码...'))
         self._qr_label.pack(pady=16)
 
         # 状态标签
@@ -108,7 +111,7 @@ class CloudLoginWindow:
         btn_frame.pack(pady=(8, 0))
 
         ttk.Button(
-            btn_frame, text="取消", command=self._close
+            btn_frame, text=t('取消'), command=self._close
         ).pack(side="left", padx=4)
 
         # 居中显示窗口
@@ -131,7 +134,7 @@ class CloudLoginWindow:
         except Exception as e:
             if self._is_closing:
                 return
-            self._root.after(0, lambda: self._handle_login_error(str(e)))
+            self._root.after(0, lambda message=str(e): self._handle_login_error(message))
 
     def _handle_qr_result(self, result: LoginResult) -> None:
         """处理二维码获取结果。"""
@@ -148,9 +151,9 @@ class CloudLoginWindow:
                 self._qr_label.image = photo  # 保持引用
             except Exception as e:
                 log.warning("显示二维码失败: %s", e)
-                self._qr_label.configure(text="二维码显示失败，请查看控制台")
+                self._qr_label.configure(text=t('二维码显示失败，请查看控制台'))
 
-            self._status_var.set("请使用米家 App 扫描二维码")
+            self._status_var.set(t('请使用米家 App 扫描二维码'))
 
             # 开始等待扫码
             self._current_thread = threading.Thread(
@@ -158,7 +161,7 @@ class CloudLoginWindow:
             )
             self._current_thread.start()
         else:
-            self._qr_label.configure(text="获取二维码失败")
+            self._qr_label.configure(text=t('获取二维码失败'))
             self._status_var.set(result.message)
 
     def _wait_for_scan_thread(self) -> None:
@@ -171,18 +174,18 @@ class CloudLoginWindow:
         except Exception as e:
             if self._is_closing:
                 return
-            self._root.after(0, lambda: self._handle_login_error(str(e)))
+            self._root.after(0, lambda message=str(e): self._handle_login_error(message))
 
     def _handle_login_result(self, result: LoginResult) -> None:
         """处理登录结果。"""
         if result.success:
-            self._status_var.set("登录成功，正在获取设备列表...")
+            self._status_var.set(t('登录成功，正在获取设备列表...'))
             self._current_thread = threading.Thread(
                 target=self._fetch_devices_thread, daemon=True
             )
             self._current_thread.start()
         else:
-            self._status_var.set(f"登录失败: {result.message}")
+            self._status_var.set(t('登录失败: {0}', result.message))
 
     def _fetch_devices_thread(self) -> None:
         """获取设备列表线程。"""
@@ -196,7 +199,7 @@ class CloudLoginWindow:
                 return
             self._root.after(
                 0,
-                lambda: self._handle_login_error(f"获取设备失败: {e}"),
+                lambda message=t('获取设备失败: {0}', e): self._handle_login_error(message),
             )
 
     def _show_device_selection(self, devices: List[XiaomiDeviceInfo]) -> None:
@@ -206,21 +209,21 @@ class CloudLoginWindow:
         if not devices:
             ttk.Label(
                 self._content_frame,
-                text="未找到任何设备",
-                font=("Microsoft YaHei UI", 11),
+                text=t('未找到任何设备'),
+                font=("Segoe UI", 11),
             ).pack(pady=16)
             ttk.Button(
                 self._content_frame,
-                text="返回",
+                text=t('返回'),
                 command=self._show_qrcode_login,
             ).pack()
             return
 
-        title_text = "请选择设备（可多选）" if self._multi_select else "请选择设备"
+        title_text = t('请选择设备（可多选）') if self._multi_select else t('请选择设备')
         ttk.Label(
             self._content_frame,
             text=title_text,
-            font=("Microsoft YaHei UI", 11, "bold"),
+            font=("Segoe UI", 11, "bold"),
         ).pack(pady=(0, 12))
 
         # 设备网格（2列）
@@ -282,18 +285,18 @@ class CloudLoginWindow:
             name_label = tk.Label(
                 card,
                 text=device.name,
-                font=("Microsoft YaHei UI", 10, "bold"),
+                font=("Segoe UI", 10, "bold"),
                 bg="#ffffff",
                 anchor="w",
             )
             name_label.pack(fill="x")
 
             # 设备型号
-            model_text = device.model or "未知型号"
+            model_text = device.model or t('未知型号')
             model_label = tk.Label(
                 card,
                 text=model_text,
-                font=("Microsoft YaHei UI", 9),
+                font=("Segoe UI", 9),
                 bg="#ffffff",
                 foreground="#666666",
                 anchor="w",
@@ -326,17 +329,17 @@ class CloudLoginWindow:
         if self._multi_select:
             # Multi-select: add select all/clear buttons
             ttk.Button(
-                btn_frame, text="全选", command=self._select_all
+                btn_frame, text=t('全选'), command=self._select_all
             ).pack(side="left", padx=4)
             ttk.Button(
-                btn_frame, text="清空", command=self._clear_selection
+                btn_frame, text=t('清空'), command=self._clear_selection
             ).pack(side="left", padx=4)
 
         ttk.Button(
-            btn_frame, text="取消", command=self._close
+            btn_frame, text=t('取消'), command=self._close
         ).pack(side="left", padx=4)
 
-        confirm_text = "确认选择" if self._multi_select else "确认选择"
+        confirm_text = t('确认选择') if self._multi_select else t('确认选择')
         ttk.Button(
             btn_frame, text=confirm_text, command=self._on_device_selected
         ).pack(side="left", padx=4)
@@ -381,17 +384,18 @@ class CloudLoginWindow:
         if self._multi_select:
             # Multi-select mode
             if not self._selected_indices:
-                messagebox.showwarning("未选择", "请至少选择一个设备", parent=self._root)
+                messagebox.showwarning(t('未选择'), t('请至少选择一个设备'), parent=self._root)
                 return
             selected_devices = [self._devices[i] for i in sorted(self._selected_indices)]
             self._close()
             # Call on_success with list of devices
             for device in selected_devices:
                 self._on_success(device)
+            return
         else:
             # Single-select mode
             if self._selected_index is None:
-                messagebox.showwarning("未选择", "请选择一个设备", parent=self._root)
+                messagebox.showwarning(t('未选择'), t('请选择一个设备'), parent=self._root)
                 return
 
         device = self._devices[self._selected_index]
@@ -400,7 +404,7 @@ class CloudLoginWindow:
 
     def _handle_login_error(self, error_message: str) -> None:
         """处理登录错误。"""
-        self._status_var.set(f"错误: {error_message}")
+        self._status_var.set(t('错误: {0}', error_message))
 
     def _close(self) -> None:
         """关闭窗口。"""

@@ -15,6 +15,8 @@ the brief miio round-trip.
 
 from __future__ import annotations
 
+from .i18n import t
+
 import ctypes
 import ctypes.wintypes
 import logging
@@ -206,7 +208,7 @@ class ShutdownListener:
             # is shown to the user in the shutdown UI ("This app is
             # preventing shutdown: ...").
             try:
-                ok = user32.ShutdownBlockReasonCreate(hwnd, "正在关闭显示器挂灯…")
+                ok = user32.ShutdownBlockReasonCreate(hwnd, t('正在关闭显示器挂灯…'))
                 log.debug("ShutdownBlockReasonCreate: %s", bool(ok))
             except Exception:  # noqa: BLE001
                 log.debug("ShutdownBlockReasonCreate not available", exc_info=True)

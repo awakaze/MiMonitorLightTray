@@ -1,6 +1,6 @@
 # Mi Monitor Light Tray
 
-> 中文版：**[README.md](README.md)**
+> 中文版：**[README.md](README.md)** · Русская инструкция: **[README_RU.md](README_RU.md)**
 
 A Windows system-tray utility that controls Xiaomi / Yeelight monitor light bars with the same flyout-slider experience as [Twinkle Tray](https://twinkletray.com/). Built on [python-miio](https://github.com/rytilahti/python-miio), talks to the light over the **local LAN** (no cloud calls).
 
@@ -38,6 +38,7 @@ If your model is in none of the sources → the app falls back to legacy. For MI
 
 ## Features
 
+- **English, Russian and Chinese UI** — follow the Windows display language or choose a language in the tray menu or Settings
 - **Twinkle Tray-style flyout** — appears near the cursor, dismisses on outside click or `Esc`
 - **Desktop widget** — pinnable on-desktop control panel, dark theme + rounded window, drag / lock, remembers position and visibility
 - **Cloud token auto-extract** — built-in "Auto-fetch" button in the setup wizard; scan a QR code with your Xiaomi account and pull device IP + Token in one go
@@ -114,16 +115,21 @@ print(f"Connected: model={info.model} firmware={info.firmware_version}")
 - Click **⏻** in the footer to toggle power, **⚙** to open settings
 - Click outside the flyout, or press `Esc`, to dismiss it
 - **Right-click** the tray icon:
-  - **调整亮度** (Adjust) — open the flyout
-  - **桌面小部件** (Desktop widget) — toggle the desktop widget
-  - **设置** (Settings) — reconfigure the device
-  - **退出** (Exit) — quit the app
+  - **Adjust lighting** — open the flyout
+  - **Desktop widget** — toggle the desktop widget
+  - **Settings** — configure devices
+  - **Language** — choose the interface language
+  - **Exit** — quit the app
 
-> The right-click menu is intentionally localized to Chinese to match the rest of the device's ecosystem (Mi Home is Chinese-first); the English README mirrors the labels for reference.
+### Language
+
+Right-click the tray icon → **Language / Язык / 语言** → **English**, **Русский**, **中文**, or **System default**. Changes apply immediately and persist without restarting. The default `auto` setting uses the Windows display language and falls back to English for unsupported languages.
+
+The language selector in **Settings → General settings** also provides a live preview: **Save** keeps the choice and **Cancel** restores the previous language. Device names, IP addresses, tokens, model IDs and diagnostic details returned by third-party libraries are kept as supplied. See [LOCALIZATION.md](LOCALIZATION.md) for developer guidance.
 
 ### Desktop widget
 
-Open it from the tray right-click menu (**桌面小部件**). The widget is a persistent control panel pinned on the desktop, sharing the flyout's dark theme:
+Open it from the tray right-click menu (**Desktop widget**). The widget is a persistent control panel pinned on the desktop, sharing the flyout's dark theme:
 
 - **Drag** the title area to move it
 - **Right-click** the widget to lock/unlock the position (locked = drag disabled, prevents accidental moves)
@@ -132,14 +138,14 @@ Open it from the tray right-click menu (**桌面小部件**). The widget is a pe
 
 ### Run at startup
 
-Open **设置** (Settings) and tick "开机自启动" (Run at startup), or use the same item in the tray right-click menu. This writes a `MiMonitorLightTray` entry to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — current-user only, no admin required.
+Open **Settings** and tick **Start with Windows**, or use the same item in the tray right-click menu. This writes a `MiMonitorLightTray` entry to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — current-user only, no admin required.
 
 ### Light follows the app
 
 Two independent toggles in the settings dialog and in the tray right-click menu:
 
-- **灯跟随软件启动** — power the light **on** when the app starts
-- **灯跟随软件关闭** — power the light **off** when the app exits (tray "退出", `Ctrl+C`, taskbar close, etc.)
+- **Turn on when app starts** — power the light **on** when the app starts
+- **Turn off when app exits** — power the light **off** when the app exits (tray **Exit**, `Ctrl+C`, taskbar close, etc.)
 
 Either can be enabled alone; combined with system autostart they give you "power on the PC → light on, shut down → light off". The exit-off path registers an `atexit` handler so it also covers exit routes that bypass the tray menu.
 
@@ -149,14 +155,17 @@ When the light is currently off and you move the brightness or CT slider, the ap
 
 ### Enable MIoT (experimental)
 
-`_MIOT_MAPPINGS` is the whitelist of known MIoT devices. If your device is a newer Yeelight model that isn't in the whitelist but you suspect it actually speaks MIoT, tick **"启用 MIoT（实验性）"** in the settings dialog. The app then attempts to talk to it using lamp22's generic Light-service spec (`(siid=2, piid=1/2/3) = power/brightness/color-temperature`). This is a calculated gamble — most Mi/Yeelight monitor lights and desk lamps follow that layout, but compatibility isn't guaranteed. If the device doesn't respond, errors will pile up; untick the box to fall back to legacy.
+`_MIOT_MAPPINGS` is the whitelist of known MIoT devices. If your device is a newer Yeelight model that isn't in the whitelist but you suspect it actually speaks MIoT, tick **Use MIoT (experimental)** in the settings dialog. The app then attempts to talk to it using lamp22's generic Light-service spec (`(siid=2, piid=1/2/3) = power/brightness/color-temperature`). This is a calculated gamble — most Mi/Yeelight monitor lights and desk lamps follow that layout, but compatibility isn't guaranteed. If the device doesn't respond, errors will pile up; untick the box to fall back to legacy.
 
 ### Command-line flags
 
 ```bash
 MiMonitorLightTray.exe --setup    # force-open the setup wizard
 MiMonitorLightTray.exe --debug    # enable DEBUG logging
+MiMonitorLightTray.exe --language ru    # start in Russian; also accepts auto / en / zh
 ```
+
+`--language` does not write the config by itself; a tray language selection or saving Settings persists the current choice. Exit the running instance before launching with different flags.
 
 ## Build a single-file EXE locally
 
@@ -220,9 +229,12 @@ Location: `%APPDATA%\MiMonitorLightTray\config.json`
     "x": 100,
     "y": 100,
     "locked": true
-  }
+  },
+  "language": "auto"
 }
 ```
+
+`language` accepts `auto` (System default), `en`, `ru`, or `zh`. Existing configuration files without this field use `auto`.
 
 `device_id` is captured automatically on the first successful connect and is what enables auto-rediscovery when the IP changes. Leaving `model` blank is fine — the app probes via `info()` at startup, picks the right protocol, and writes the resolved model back. `enable_miot_for_unknown` lets Yeelight devices outside the `_MIOT_MAPPINGS` whitelist try MIoT using lamp22's generic Light-service spec — for newer models that follow the same layout. `power_on_at_startup` / `power_off_at_exit` are two independent toggles that control whether the light follows the app's lifecycle. The `widget` block stores the desktop widget's position, lock state, and visibility. Brightness and color temperature are remembered by the lamp itself; the system-level launch-at-startup flag lives in the Windows registry, not here.
 

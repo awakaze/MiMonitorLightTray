@@ -1,6 +1,6 @@
 # 小米显示器挂灯托盘控制器
 
-> English version: **[README_EN.md](README_EN.md)** · 在线文档：**[awakaze.github.io/MiMonitorLightTray](https://awakaze.github.io/MiMonitorLightTray/)**
+> English version: **[README_EN.md](README_EN.md)** · Русская инструкция：**[README_RU.md](README_RU.md)** · 在线文档：**[awakaze.github.io/MiMonitorLightTray](https://awakaze.github.io/MiMonitorLightTray/)**
 
 一款 Windows 系统托盘小工具，用类似 [Twinkle Tray](https://twinkletray.com/) 的弹出式滑杆，控制小米 / Yeelight 显示器挂灯及各类米家灯具的开关、亮度与色温。基于 [python-miio](https://github.com/rytilahti/python-miio) 与设备本地局域网通信，**不经过云端**。
 
@@ -40,6 +40,7 @@
 
 ## 特性
 
+- **多语言界面** — 支持中文、English、Русский，可跟随 Windows 显示语言或手动切换
 - **多灯并行管理** — 一个实例控制任意多盏米家 / Yeelight 灯，每灯独立配置
 - **类 Twinkle Tray 弹出窗** — 每盏灯一节滑杆与开关按钮，窗口高度按内容自适应
 - **"关闭所有灯"一键操作** — 弹窗底部按钮，一次关掉所有在线设备
@@ -113,6 +114,12 @@ mi-monitor-light-tray
 - 底部按钮从右到左：**⚙** 打开设置、**⏻** 关闭所有在线灯
 - 点击窗口外或按 `Esc` 关闭弹窗
 - 设备名过长时自动截断为 `xxxx...`，按钮位置保持固定，不会被挤出可视区
+
+### 界面语言
+
+右键托盘图标 → **Language / Язык / 语言**，选择 **中文**、**English**、**Русский** 或 **跟随系统 / System default**。切换立即生效并保存；无需重启。默认选项 `auto` 使用 Windows 显示语言，未支持的语言回退到英语。
+
+也可在 **设置 → 全局设置** 中预览语言。点击 **保存** 保留选择，点击 **取消** 恢复先前语言。设备名称、IP、Token、型号和第三方诊断信息不会被翻译。开发说明见 [LOCALIZATION.md](LOCALIZATION.md)。
 
 ### 右键托盘菜单
 
@@ -205,7 +212,10 @@ mi-monitor-light-tray
 ```bash
 MiMonitorLightTray.exe --setup    # 强制打开设备列表向导
 MiMonitorLightTray.exe --debug    # 开启调试日志
+MiMonitorLightTray.exe --language ru    # 以俄语启动；也支持 auto / en / zh
 ```
+
+`--language` 本身不会立即写入配置；通过托盘菜单选择语言或保存设置时会记住选择。更改启动参数前，请先退出已运行的实例。
 
 ## 从源码构建 EXE
 
@@ -310,12 +320,14 @@ tests/                    pytest 单元测试套件
     "color_temp_down": "",
     "step": 5
   },
-  "auto_check_update": true
+  "auto_check_update": true,
+  "language": "auto"
 }
 ```
 
 **字段说明**：
 
+- `language`：`auto`（跟随系统）、`zh`、`en` 或 `ru`；旧配置缺少此字段时默认 `auto`
 - `devices[]`：所有设备的数组。可以是空数组（此时启动会进设备列表向导）
 - `devices[].id`：稳定标识符，新设备是 `temp_xxxxxxxx`，首次成功连接后自动升级为 `<device_id 的 8 位十六进制>`
 - `devices[].device_id`：首次连接时从 miio `info()` 捕获，用于 IP 变化后的自动发现

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..i18n import t
+
 import hashlib
 import logging
 import time
@@ -56,7 +58,7 @@ class XiaomiAuth(ABC):
                                     "device_info", []
                                 ):
                                     device = XiaomiDeviceInfo(
-                                        name=dev.get("name", "未知设备"),
+                                        name=dev.get("name", t('未知设备')),
                                         did=dev.get("did", ""),
                                         token=dev.get("token", ""),
                                         localip=dev.get("localip", ""),
@@ -115,17 +117,17 @@ class PasswordAuth(XiaomiAuth):
 
         # 步骤1：获取签名
         if not self.login_step_1():
-            return LoginResult(success=False, message="用户名无效")
+            return LoginResult(success=False, message=t('用户名无效'))
 
         # 步骤2：验证密码
         if not self.login_step_2():
-            return LoginResult(success=False, message="用户名或密码错误")
+            return LoginResult(success=False, message=t('用户名或密码错误'))
 
         # 步骤3：获取 service token
         if self._location and not self._connector._service_token:
             if not self.login_step_3():
                 return LoginResult(
-                    success=False, message="无法获取 service token"
+                    success=False, message=t('无法获取 service token')
                 )
 
         # 设置连接器会话数据
@@ -137,7 +139,7 @@ class PasswordAuth(XiaomiAuth):
             )
             return LoginResult(
                 success=True,
-                message="登录成功",
+                message=t('登录成功'),
                 session_data={
                     "ssecurity": self._ssecurity,
                     "service_token": self._connector._service_token,
@@ -145,7 +147,7 @@ class PasswordAuth(XiaomiAuth):
                 },
             )
 
-        return LoginResult(success=False, message="登录失败")
+        return LoginResult(success=False, message=t('登录失败'))
 
     def login_step_1(self) -> bool:
         """步骤1：获取签名。
@@ -263,16 +265,16 @@ class QrCodeAuth(XiaomiAuth):
 
         # 步骤1：获取登录 URL
         if not self.login_step_1():
-            return LoginResult(success=False, message="无法获取登录信息")
+            return LoginResult(success=False, message=t('无法获取登录信息'))
 
         # 步骤2：获取二维码图像
         qr_image_data = self.login_step_2()
         if qr_image_data is None:
-            return LoginResult(success=False, message="无法获取二维码图像")
+            return LoginResult(success=False, message=t('无法获取二维码图像'))
 
         return LoginResult(
             success=True,
-            message="请扫描二维码登录",
+            message=t('请扫描二维码登录'),
             qr_image_data=qr_image_data,
             session_data={
                 "login_url": self._login_url,
@@ -336,7 +338,7 @@ class QrCodeAuth(XiaomiAuth):
         """
         log.debug("等待扫码...")
         if not self._long_polling_url:
-            return LoginResult(success=False, message="未初始化")
+            return LoginResult(success=False, message=t('未初始化'))
 
         start_time = time.time()
         while True:
@@ -346,10 +348,10 @@ class QrCodeAuth(XiaomiAuth):
                 )
             except requests.exceptions.Timeout:
                 if time.time() - start_time > self._timeout:
-                    return LoginResult(success=False, message="二维码已过期")
+                    return LoginResult(success=False, message=t('二维码已过期'))
                 continue
             except requests.exceptions.RequestException as e:
-                return LoginResult(success=False, message=f"网络错误: {e}")
+                return LoginResult(success=False, message=t('网络错误: {0}', e))
 
             if response.status_code == 200:
                 response_data = XiaomiCloudConnector.to_json(response.text)
@@ -373,16 +375,16 @@ class QrCodeAuth(XiaomiAuth):
                         if self._connector._service_token:
                             return LoginResult(
                                 success=True,
-                                message="登录成功",
+                                message=t('登录成功'),
                                 session_data={
                                     "ssecurity": self._connector._ssecurity,
                                     "service_token": self._connector._service_token,
                                     "user_id": self._connector._user_id,
                                 },
                             )
-                return LoginResult(success=False, message="登录失败")
+                return LoginResult(success=False, message=t('登录失败'))
             else:
                 return LoginResult(
                     success=False,
-                    message=f"轮询失败: {response.status_code}",
+                    message=t('轮询失败: {0}', response.status_code),
                 )

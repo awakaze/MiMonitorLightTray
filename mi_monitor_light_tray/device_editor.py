@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from .i18n import t
+
 import logging
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
+from . import dialogs as messagebox
 from typing import Callable, Optional
 import uuid
 
@@ -34,7 +37,7 @@ class _Tooltip:
         tw.attributes("-topmost", True)
         tk.Label(tw, text=self._text, background="#ffffc0",
                  relief="solid", borderwidth=1,
-                 font=("Microsoft YaHei UI", 9),
+                 font=("Segoe UI", 9),
                  padx=8, pady=6, justify="left").pack()
 
     def _hide(self, _e=None) -> None:
@@ -57,7 +60,7 @@ class DeviceEditorDialog:
         self._tested_device_id = 0
 
         self._dialog = tk.Toplevel(parent)
-        self._dialog.title("设备配置" if device.ip else "添加设备")
+        self._dialog.title(t('设备配置') if device.ip else t('添加设备'))
         self._dialog.resizable(False, False)
         self._dialog.configure(bg="#f3f3f3")
         self._dialog.transient(parent)
@@ -69,11 +72,11 @@ class DeviceEditorDialog:
         ph = parent.winfo_height()
         px = parent.winfo_x()
         py = parent.winfo_y()
-        w = 480
-        h = 680  # Increased height to accommodate hotkey settings
+        w = 820
+        h = min(820, self._dialog.winfo_screenheight() - 100)
         x = px + (pw - w) // 2
         y = py + (ph - h) // 2
-        self._dialog.geometry(f"{w}x{h}+{x}+{y}")
+        self._dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
 
         style = ttk.Style()
         try:
@@ -81,42 +84,50 @@ class DeviceEditorDialog:
         except tk.TclError:
             style.theme_use("clam")
         style.configure("TLabel", background="#f3f3f3",
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Segoe UI", 9))
         style.configure("TFrame", background="#f3f3f3")
         style.configure("TButton", padding=(12, 6),
-                        font=("Microsoft YaHei UI", 9))
+                        font=("Segoe UI", 9))
 
         self._build_ui()
 
     def _build_ui(self) -> None:
         pad = {"padx": 16, "pady": 8}
 
-        frm = ttk.Frame(self._dialog, padding=(20, 16, 20, 16))
-        frm.pack(fill="both", expand=True)
+        canvas = tk.Canvas(self._dialog, bg="#f3f3f3", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self._dialog, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        frm = ttk.Frame(canvas, padding=(20, 16, 20, 16))
+        window = canvas.create_window((0, 0), window=frm, anchor="nw")
+        frm.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        self._dialog.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-int(e.delta / 120), "units"))
 
         # Title
         ttk.Label(
             frm,
-            text="设备信息",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            text=t('设备信息'),
+            font=("Segoe UI", 11, "bold"),
             foreground="#1a1a1a",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         # Fields
         self._ip_var = tk.StringVar(value=self._device.ip)
         self._token_var = tk.StringVar(value=self._device.token)
-        self._name_var = tk.StringVar(value=self._device.name or "显示器挂灯")
+        self._name_var = tk.StringVar(value=self._device.name or t('显示器挂灯'))
         self._model_var = tk.StringVar(value=self._device.model)
 
         fields = [
-            ("设备 IP 地址", self._ip_var, False,
-             "从米家 App 或路由器查看\n如: 192.168.31.73"),
-            ("miio Token", self._token_var, True,
-             "32 位十六进制字符串\n用 Xiaomi-cloud-tokens-extractor 获取"),
-            ("显示名称", self._name_var, False,
-             "设备的显示名称"),
-            ("型号（可选）", self._model_var, False,
-             "留空自动识别\n如: yeelink.light.lamp22"),
+            (t('设备 IP 地址'), self._ip_var, False,
+             t('从米家 App 或路由器查看\n如: 192.168.31.73')),
+            (t('miio Token'), self._token_var, True,
+             t('32 位十六进制字符串\n用 Xiaomi-cloud-tokens-extractor 获取')),
+            (t('显示名称'), self._name_var, False,
+             t('设备的显示名称')),
+            (t('型号（可选）'), self._model_var, False,
+             t('留空自动识别\n如: yeelink.light.lamp22')),
         ]
 
         self._token_entry: Optional[ttk.Entry] = None
@@ -125,8 +136,8 @@ class DeviceEditorDialog:
                                             sticky="w", **pad)
             e = ttk.Entry(frm, textvariable=var, width=30,
                           show="*" if secret else "",
-                          font=("Consolas", 10) if not label.startswith("显") else
-                               ("Microsoft YaHei UI", 10))
+                          font=("Consolas", 10) if var is not self._name_var else
+                               ("Segoe UI", 10))
             e.grid(row=i, column=1, sticky="ew", **pad)
             _Tooltip(e, tip)
             if secret:
@@ -138,79 +149,78 @@ class DeviceEditorDialog:
             self._token_entry.configure(
                 show="" if self._show_token.get() else "*")
 
-        ttk.Checkbutton(frm, text="显示 Token",
+        ttk.Checkbutton(frm, text=t('显示 Token'),
                         variable=self._show_token, command=_toggle
                         ).grid(row=5, column=1, sticky="w", padx=16)
 
         # Per-device toggles
         ttk.Label(
             frm,
-            text="设备选项",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            text=t('设备选项'),
+            font=("Segoe UI", 11, "bold"),
             foreground="#1a1a1a",
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(16, 8))
 
         self._power_on_at_startup_var = tk.BooleanVar(
             value=self._device.power_on_at_startup)
         cb_on = ttk.Checkbutton(
-            frm, text="灯跟随软件启动",
+            frm, text=t('灯跟随软件启动'),
             variable=self._power_on_at_startup_var,
         )
         cb_on.grid(row=7, column=0, sticky="w", padx=16, pady=(4, 0))
-        _Tooltip(cb_on, "勾选后：程序启动时自动开灯")
+        _Tooltip(cb_on, t('勾选后：程序启动时自动开灯'))
 
         self._power_off_at_exit_var = tk.BooleanVar(
             value=self._device.power_off_at_exit)
         cb_off = ttk.Checkbutton(
-            frm, text="灯跟随软件关闭",
+            frm, text=t('灯跟随软件关闭'),
             variable=self._power_off_at_exit_var,
         )
         cb_off.grid(row=7, column=1, sticky="w", padx=16, pady=(4, 0))
-        _Tooltip(cb_off, "勾选后：程序退出时自动关灯")
+        _Tooltip(cb_off, t('勾选后：程序退出时自动关灯'))
 
         self._power_off_on_monitor_sleep_var = tk.BooleanVar(
             value=self._device.power_off_on_monitor_sleep)
         cb_monitor = ttk.Checkbutton(
-            frm, text="灯随显示器休眠开关",
+            frm, text=t('灯随显示器休眠开关'),
             variable=self._power_off_on_monitor_sleep_var,
         )
         cb_monitor.grid(row=8, column=0, sticky="w", padx=16, pady=(4, 0))
-        _Tooltip(cb_monitor, "勾选后：显示器休眠时自动关灯\n显示器唤醒时自动开灯")
+        _Tooltip(cb_monitor, t('勾选后：显示器休眠时自动关灯\n显示器唤醒时自动开灯'))
 
         self._power_off_on_system_suspend_var = tk.BooleanVar(
             value=self._device.power_off_on_system_suspend)
         cb_system_off = ttk.Checkbutton(
-            frm, text="系统休眠时关灯",
+            frm, text=t('系统休眠时关灯'),
             variable=self._power_off_on_system_suspend_var,
         )
         cb_system_off.grid(row=8, column=1, sticky="w", padx=16, pady=(4, 0))
-        _Tooltip(cb_system_off, "勾选后：系统进入睡眠/休眠时自动关灯")
+        _Tooltip(cb_system_off, t('勾选后：系统进入睡眠/休眠时自动关灯'))
 
         self._power_on_on_system_resume_var = tk.BooleanVar(
             value=self._device.power_on_on_system_resume)
         cb_system_on = ttk.Checkbutton(
-            frm, text="系统唤醒时开灯",
+            frm, text=t('系统唤醒时开灯'),
             variable=self._power_on_on_system_resume_var,
         )
         cb_system_on.grid(row=9, column=0, sticky="w", padx=16, pady=(4, 0))
-        _Tooltip(cb_system_on, "勾选后：系统从睡眠/休眠唤醒时自动开灯")
+        _Tooltip(cb_system_on, t('勾选后：系统从睡眠/休眠唤醒时自动开灯'))
 
         self._enable_miot_var = tk.BooleanVar(
             value=self._device.enable_miot_for_unknown)
         cb_miot = ttk.Checkbutton(
-            frm, text="启用 MIoT（实验性）",
+            frm, text=t('启用 MIoT（实验性）'),
             variable=self._enable_miot_var,
         )
         cb_miot.grid(row=9, column=1, sticky="w", padx=16, pady=(4, 0))
         _Tooltip(cb_miot,
-                 "对未列入 MIoT 白名单的新型 Yeelight 设备，\n"
-                 "尝试用通用 Light service spec 走 MIoT 协议。")
+                 t('对未列入 MIoT 白名单的新型 Yeelight 设备，\n尝试用通用 Light service spec 走 MIoT 协议。'))
 
         # Hotkey Settings
         ttk.Label(
             frm,
-            text="快捷键设置（仅控制此设备）",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            text=t('快捷键设置（仅控制此设备）'),
+            font=("Segoe UI", 11, "bold"),
             foreground="#1a1a1a",
         ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(16, 8))
 
@@ -221,16 +231,16 @@ class DeviceEditorDialog:
         self._hotkey_step_var = tk.IntVar(value=self._device.hotkey_step or 5)
 
         hotkey_fields = [
-            ("亮度增加", self._brightness_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Up\n右键点击可清空"),
-            ("亮度降低", self._brightness_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Down\n右键点击可清空"),
-            ("色温增加", self._color_temp_up_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Right\n右键点击可清空"),
-            ("色温降低", self._color_temp_down_var, "点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Left\n右键点击可清空"),
+            (t('亮度增加'), self._brightness_up_var, t('点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Up\n右键点击可清空')),
+            (t('亮度降低'), self._brightness_down_var, t('点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Down\n右键点击可清空')),
+            (t('色温增加'), self._color_temp_up_var, t('点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Right\n右键点击可清空')),
+            (t('色温降低'), self._color_temp_down_var, t('点击输入框并按下想要的快捷键组合\n如: Ctrl+Alt+Left\n右键点击可清空')),
         ]
 
         for i, (label, var, tip) in enumerate(hotkey_fields, start=11):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", **pad)
             e = ttk.Entry(frm, textvariable=var, width=30,
-                          font=("Microsoft YaHei UI", 9))
+                          font=("Segoe UI", 9))
             e.grid(row=i, column=1, sticky="ew", **pad)
             _Tooltip(e, tip)
             # Bind key capture events
@@ -240,12 +250,12 @@ class DeviceEditorDialog:
             # Right-click clears the hotkey
             e.bind("<Button-3>", lambda evt, v=var: v.set(""))
 
-        ttk.Label(frm, text="调整步进").grid(row=15, column=0, sticky="w", **pad)
+        ttk.Label(frm, text=t('调整步进')).grid(row=15, column=0, sticky="w", **pad)
         step_frame = ttk.Frame(frm)
         step_frame.grid(row=15, column=1, sticky="w", **pad)
         ttk.Spinbox(step_frame, from_=1, to=20, textvariable=self._hotkey_step_var,
                     width=10).pack(side="left")
-        ttk.Label(step_frame, text="  (亮度: 1-100, 色温按比例)").pack(side="left")
+        ttk.Label(step_frame, text=t('  (亮度: 1-100, 色温按比例)')).pack(side="left")
 
         frm.columnconfigure(1, weight=1)
 
@@ -260,12 +270,12 @@ class DeviceEditorDialog:
         btn_row.grid(row=17, column=0, columnspan=2,
                      sticky="e", pady=(12, 4), padx=16)
 
-        ttk.Button(btn_row, text="取消",
+        ttk.Button(btn_row, text=t('取消'),
                    command=self._close).pack(side="left", padx=4)
-        self._test_btn = ttk.Button(btn_row, text="测试连接",
+        self._test_btn = ttk.Button(btn_row, text=t('测试连接'),
                                     command=self._on_test)
         self._test_btn.pack(side="left", padx=4)
-        self._save_btn = ttk.Button(btn_row, text="保存",
+        self._save_btn = ttk.Button(btn_row, text=t('保存'),
                                     command=self._on_save)
         self._save_btn.pack(side="left", padx=4)
 
@@ -283,7 +293,7 @@ class DeviceEditorDialog:
             id=id_to_use,
             ip=self._ip_var.get().strip(),
             token=self._token_var.get().strip(),
-            name=self._name_var.get().strip() or "显示器挂灯",
+            name=self._name_var.get().strip() or t('显示器挂灯'),
             model=self._model_var.get().strip(),
             device_id=device_id_to_use,
             enable_miot_for_unknown=self._enable_miot_var.get(),
@@ -297,16 +307,18 @@ class DeviceEditorDialog:
             color_temp_up=self._color_temp_up_var.get().strip(),
             color_temp_down=self._color_temp_down_var.get().strip(),
             hotkey_step=self._hotkey_step_var.get(),
+            show_brightness=self._device.show_brightness,
+            show_color_temp=self._device.show_color_temp,
         )
 
     def _on_test(self) -> None:
         dev = self._collect()
         if not dev.is_complete():
-            messagebox.showerror("输入错误",
-                                 "请填写设备 IP 地址和 32 位 Token",
+            messagebox.showerror(t('输入错误'),
+                                 t('请填写设备 IP 地址和 32 位 Token'),
                                  parent=self._dialog)
             return
-        self._status_var.set("正在测试连接…")
+        self._status_var.set(t('正在测试连接…'))
         self._test_btn.configure(state="disabled")
         threading.Thread(target=self._test_thread,
                          args=(dev,), daemon=True).start()
@@ -322,18 +334,18 @@ class DeviceEditorDialog:
             if device_id:
                 self._tested_device_id = device_id
                 log.info("Test connection captured device_id %08x", device_id)
-            messagebox.showinfo("连接成功", f"设备在线\n{message}",
+            messagebox.showinfo(t('连接成功'), t('设备在线\n{0}', message),
                                 parent=self._dialog)
         else:
-            messagebox.showerror("连接失败",
-                                 f"无法连接到设备\n{message}",
+            messagebox.showerror(t('连接失败'),
+                                 t('无法连接到设备\n{0}', message),
                                  parent=self._dialog)
 
     def _on_save(self) -> None:
         dev = self._collect()
         if not dev.is_complete():
-            messagebox.showerror("输入错误",
-                                 "请填写设备 IP 地址和 32 位 Token",
+            messagebox.showerror(t('输入错误'),
+                                 t('请填写设备 IP 地址和 32 位 Token'),
                                  parent=self._dialog)
             return
         self._close()
